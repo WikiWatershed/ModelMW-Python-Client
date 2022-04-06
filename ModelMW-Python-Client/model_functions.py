@@ -20,8 +20,6 @@ import json
 
 from typing import Dict, TypedDict, Union, Any
 
-sys.path.append("C:\\Users\\sdamiano\\Desktop\\ModelMyWatershed")
-
 #%%
 # import logging
 # # These two lines enable debugging at httplib level (requests->urllib3->http.client)
@@ -585,15 +583,15 @@ class ModelMyWatershedAPI:
                     and needed_result_key
                     in req_dump["result_response"]["result"].keys()
                 ):
-                    tr55_result_raw = req_dump["result_response"]
-                    saved_result = copy.deepcopy(tr55_result_raw)["result"]
+                    result_raw = req_dump["result_response"]
+                    saved_result = copy.deepcopy(result_raw)["result"]
 
                 elif (
                     "result" in req_dump.keys()
                     and needed_result_key in req_dump["result"].keys()
                 ):
-                    tr55_result_raw = req_dump
-                    saved_result = copy.deepcopy(tr55_result_raw)["result"]
+                    result_raw = req_dump
+                    saved_result = copy.deepcopy(result_raw)["result"]
 
                 elif needed_result_key in req_dump.keys():
                     saved_result = copy.deepcopy(req_dump)
@@ -603,12 +601,12 @@ class ModelMyWatershedAPI:
                     "result_response" in req_dump.keys()
                     and "result" in req_dump["result_response"].keys()
                 ):
-                    tr55_result_raw = req_dump["result_response"]
-                    saved_result = copy.deepcopy(tr55_result_raw)["result"]
+                    result_raw = req_dump["result_response"]
+                    saved_result = copy.deepcopy(result_raw)["result"]
 
                 elif "result" in req_dump.keys():
-                    tr55_result_raw = req_dump
-                    saved_result = copy.deepcopy(tr55_result_raw)["result"]
+                    result_raw = req_dump
+                    saved_result = copy.deepcopy(result_raw)["result"]
 
             print(
                 "\tRead saved {} results for {} from JSON".format(
