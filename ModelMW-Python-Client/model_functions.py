@@ -18,7 +18,7 @@ import pandas as pd
 
 import json
 
-from typing import Dict, TypedDict, Union, Any
+from typing import Dict, List, TypedDict, Union, Any
 
 #%%
 # import logging
@@ -124,8 +124,8 @@ class ModelMyWatershedAPI:
 
     def __init__(
         self,
-        save_path: str,
         api_key: str,
+        save_path: str=None,
         use_staging: bool = False,
     ):
         """Create a new class for accessing ModelMyWatershed's API's
@@ -144,7 +144,8 @@ class ModelMyWatershedAPI:
         self.api_key = api_key
         self.save_path = save_path
 
-        self.json_dump_path = self.save_path + "mmw_results\\json_results\\"
+        if self.save_path is not None:
+            self.json_dump_path = self.save_path + "mmw_results\\json_results\\"
 
         # create a request session
 
@@ -491,13 +492,14 @@ class ModelMyWatershedAPI:
                 )
             )
         # dump out the whole job for posterity
-        with open(
-            self.get_dump_filename(
-                start_job_dict["request_endpoint"], start_job_dict["job_label"]
-            ),
-            "w",
-        ) as fp:
-            json.dump(finished_job_dict, fp, indent=2)
+        if self.save_path is not None:
+            with open(
+                self.get_dump_filename(
+                    start_job_dict["request_endpoint"], start_job_dict["job_label"]
+                ),
+                "w",
+            ) as fp:
+                json.dump(finished_job_dict, fp, indent=2)
 
         return finished_job_dict
 
@@ -615,6 +617,191 @@ class ModelMyWatershedAPI:
                 )
             )
         return (req_dump, saved_result)
+
+    def run_batch_analysis(
+        self, list_of_aois: List, analysis_endpoint: str
+    ) -> pd.DataFrame:
+        run_frames = []
+        run_number: int = 1
+        for aoi in list_of_aois:
+            # TODO(SRGDamia1): validate strings
+            # if it's a string with underscores, we're assuming it's a WKAoI from the hidden well-known area of interest table
+            # this is not expected, but we'll support it
+            if isinstance(aoi, str) and "__" in aoi:
+                job_label = aoi
+                params = {"wkaoi": aoi}
+                payload = None
+            # if it doesn't have underscores, we're assuiming it's a HUC
+            elif isinstance(aoi, str) and (
+                len(aoi) == 8 or len(aoi) == 10 or len(aoi) == 12
+            ):
+                job_label = aoi
+                params = {"huc": aoi}
+                payload = None
+            # if it's not a string, hopefully it's a valid geojson
+            # TODO(SRGDamia1): validate geojson!  Must be a valid single-ringed Multipolygon GeoJSON representation of the shape to analyze
+            # NOTE:  In order to validate geojson, we'd need to add some sort of geo dependency.  I'm not sure if we want to add that.
+            else:
+                if (
+                    isinstance(aoi, Dict)
+                    and "properties" in aoi.keys()
+                    and "name" in aoi["properties"].keys
+                ):
+                    job_label = aoi["properties"]["name"]
+                else:
+                    job_label = "shape_{}".format(run_number)
+                params = None
+                payload = aoi
+
+            req_dump = self.run_mmw_job(
+                request_endpoint=analysis_endpoint,
+                job_label=job_label,
+                params=params,
+                payload=payload,
+            )
+            try:
+                req_dump = self.run_mmw_job(
+                    request_endpoint=analysis_endpoint,
+                    job_label=job_label,
+                    params=params,
+                    payload=payload,
+                )
+                res_frame = pd.DataFrame(
+                    copy.deepcopy(
+                        req_dump["result_response"]["result"]["survey"]["categories"]
+                    )
+                )
+            except Exception as ex:
+                print("\tUnexpected exception:\n\t{}".format(ex))
+                continue
+
+            res_frame["job_label"] = job_label
+            res_frame["request_endpoint"] = analysis_endpoint
+            run_frames.append(res_frame)
+            run_number += 1
+
+        # join all of the frames together into one frame with the batch results
+        lu_results = pd.concat(run_frames, ignore_index=True)
+        return lu_results
+
+    def run_batch_gwlfe(
+        self, list_of_aois: List, layer_overrides: ModemMyWatershedLayerOverride = None
+    ) -> pd.DataFrame:
+        # empty lists to hold results
+        mapshed_z_files = []
+
+        gwlfe_monthlies = []
+        gwlfe_load_summaries = []
+        gwlfe_lu_loads = []
+        gwlfe_metas = []
+        gwlfe_summaries = []
+
+        run_number: int = 1
+        for aoi in list_of_aois:
+            mapshed_payload = {}
+            if layer_overrides is not None:
+                mapshed_payload["layer_overrides"] = layer_overrides
+            # TODO(SRGDamia1): validate strings
+            # if it's a string with underscores, we're assuming it's a WKAoI from the hidden well-known area of interest table
+            # this is not expected, but we'll support it
+            if isinstance(aoi, str) and "__" in aoi:
+                job_label = aoi
+                mapshed_payload["wkaoi"] = aoi
+            # if it doesn't have underscores, we're assuiming it's a HUC
+            elif isinstance(aoi, str) and (
+                len(aoi) == 8 or len(aoi) == 10 or len(aoi) == 12
+            ):
+                job_label = aoi
+                mapshed_payload["huc"] = aoi
+            # if it's not a string, hopefully it's a valid geojson
+            # TODO(SRGDamia1): validate geojson!  Must be a valid single-ringed Multipolygon GeoJSON representation of the shape to analyze
+            # NOTE:  In order to validate geojson, we'd need to add some sort of geo dependency.  I'm not sure if we want to add that.
+            else:
+                if (
+                    isinstance(aoi, Dict)
+                    and "properties" in aoi.keys()
+                    and "name" in aoi["properties"].keys
+                ):
+                    job_label = aoi["properties"]["name"]
+                else:
+                    job_label = "shape_{}".format(run_number)
+                mapshed_payload["area_of_interest"] = aoi
+
+            mapshed_job_id = None
+            mapshed_result = None
+
+            mapshed_job_dict = self.run_mmw_job(
+                request_endpoint=self.mapshed_endpoint,
+                job_label=job_label,
+                params=None,
+                payload=mapshed_payload,
+            )
+            if "result_response" in mapshed_job_dict.keys():
+                mapshed_job_id = mapshed_job_dict["start_job_response"]["job"]
+                mapshed_result = mapshed_job_dict["result_response"]["result"]
+
+                mapshed_result["job_label"] = job_label
+                mapshed_z_files.append(mapshed_result)
+
+            ## Run GWLF-E once for each layer, and then two more times for the
+            # centers and coridors modifications of the 2011 data
+
+            ## NOTE:  Don't run GWLF-E if we don't get MapShed results
+            if mapshed_job_id is not None and mapshed_result is not None:
+
+                land_use_modification_set = "[{}]"
+
+                gwlfe_payload = {
+                    # NOTE:  The value of the inputmod_hash doesn't really matter here
+                    # Internally, the ModelMW site uses the inputmod_hash in scenerios to
+                    # determine whether it can use cached results or if it needs to
+                    # re-run the job
+                    "inputmod_hash": self.inputmod_hash,
+                    "modifications": land_use_modification_set,
+                    "mapshed_job_uuid": mapshed_job_id,
+                }
+                gwlfe_job_dict = self.run_mmw_job(
+                    request_endpoint=self.gwlfe_endpoint,
+                    job_label=job_label,
+                    params=None,
+                    payload=gwlfe_payload,
+                )
+                if "result_response" in gwlfe_job_dict.keys():
+                    gwlfe_result_raw = gwlfe_job_dict["result_response"]
+                    gwlfe_result = copy.deepcopy(gwlfe_result_raw)["result"]
+
+            if gwlfe_result is not None:
+                gwlfe_monthly = pd.DataFrame(gwlfe_result.pop("monthly"))
+                gwlfe_monthly["month"] = gwlfe_monthly.index + 1
+                gwlfe_load_summary = pd.DataFrame(gwlfe_result.pop("SummaryLoads"))
+                gwlfe_lu_load = pd.DataFrame(gwlfe_result.pop("Loads"))
+                gwlfe_meta = pd.DataFrame(gwlfe_result.pop("meta"), index=[1])
+                gwlfe_summary = pd.DataFrame(gwlfe_result, index=[1])
+
+                for frame in [
+                    gwlfe_monthly,
+                    gwlfe_load_summary,
+                    gwlfe_lu_load,
+                    gwlfe_meta,
+                    gwlfe_summary,
+                ]:
+                    frame["job_label"] = job_label
+                gwlfe_monthlies.append(gwlfe_monthly)
+                gwlfe_load_summaries.append(gwlfe_load_summary)
+                gwlfe_lu_loads.append(gwlfe_lu_load)
+                gwlfe_metas.append(gwlfe_meta)
+                gwlfe_summaries.append(gwlfe_summary)
+
+        # join various result
+        gwlfe_results = {}
+        gwlfe_results["gwlfe_monthly"] = pd.concat(gwlfe_monthlies, ignore_index=True)
+        gwlfe_results["gwlfe_load_summaries"] = pd.concat(
+            gwlfe_load_summaries, ignore_index=True
+        )
+        gwlfe_results["gwlfe_lu_loads"] = pd.concat(gwlfe_lu_loads, ignore_index=True)
+        gwlfe_results["gwlfe_metadata"] = pd.concat(gwlfe_metas, ignore_index=True)
+        gwlfe_results["gwlfe_summaries"] = pd.concat(gwlfe_summaries, ignore_index=True)
+        return gwlfe_results
 
     # note:  In the ModelMyWatershed javascript, the mapshed total area value is called the "autoTotal" and the analysis-derived total area is called the "presetTotal".  I do not understand at all why they aren't the same.
 
