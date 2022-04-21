@@ -8,6 +8,7 @@ import copy
 import re
 from pathlib import Path
 from collections import OrderedDict
+from typing_extensions import NotRequired
 
 import requests
 from requests import Session
@@ -40,42 +41,50 @@ from typing import Dict, List, TypedDict, Union, Any
 #%%
 class ModelMyWatershedJob(TypedDict):
     job_label: str
+    request_host: str
     request_endpoint: str
-    payload: Union[str, Dict]
-    start_job_response: Any
-    result_response: Any
+    params: NotRequired[Dict]
+    payload: NotRequired[Union[str, Dict]]
+    start_job_response: NotRequired[Any]
+    result_response: NotRequired[Any]
+    error_response: NotRequired[Dict]
+
+
+class ModemMyWatershedLayerOverride(TypedDict):
+    __LAND__: NotRequired[str]
+    __STREAMS__: NotRequired[str]
 
 
 class ModelMyWatershedAPI:
     # the ModelMyWatershed page
-    staging_mmw_host = "https://staging.modelmywatershed.org"
-    production_mmw_host = "https://modelmywatershed.org"
+    staging_mmw_host: str = "https://staging.modelmywatershed.org"
+    production_mmw_host: str = "https://modelmywatershed.org"
 
-    api_endpoint = "api/"
-    analyze_endpoint = api_endpoint + "analyze/"
-    modeling_endpoint = "mmw/modeling/"
+    api_endpoint: str = "api/"
+    analyze_endpoint: str = api_endpoint + "analyze/"
+    modeling_endpoint: str = "mmw/modeling/"
 
-    streams_endpoint = analyze_endpoint + "streams/"
-    protected_lands_endpoint = analyze_endpoint + "protected-lands/"
-    soil_endpoint = analyze_endpoint + "soil/"
-    terrain_endpoint = analyze_endpoint + "terrain/"
-    climate_endpoint = analyze_endpoint + "climate/"
-    point_source_endpoint = analyze_endpoint + "pointsource/"
-    animal_endpoint = analyze_endpoint + "animals/"
-    srat_endpoint = analyze_endpoint + "catchment-water-quality/"
-    catchment_water_quality_endpoint = srat_endpoint
+    streams_endpoint: str = analyze_endpoint + "streams/"
+    protected_lands_endpoint: str = analyze_endpoint + "protected-lands/"
+    soil_endpoint: str = analyze_endpoint + "soil/"
+    terrain_endpoint: str = analyze_endpoint + "terrain/"
+    climate_endpoint: str = analyze_endpoint + "climate/"
+    point_source_endpoint: str = analyze_endpoint + "pointsource/"
+    animal_endpoint: str = analyze_endpoint + "animals/"
+    srat_endpoint: str = analyze_endpoint + "catchment-water-quality/"
+    catchment_water_quality_endpoint: str = srat_endpoint
 
-    lu_endpoint_nlcd = analyze_endpoint + "land/{}/"
-    lu_endpoint_2100 = analyze_endpoint + "drb-2100-land/{}/"
+    lu_endpoint_nlcd: str = analyze_endpoint + "land/{}/"
+    lu_endpoint_2100: str = analyze_endpoint + "drb-2100-land/{}/"
 
-    mapshed_endpoint = modeling_endpoint + "mapshed/"
-    gwlfe_endpoint = modeling_endpoint + "gwlfe/"
-    tr55_endpoint = modeling_endpoint + "tr55/"
+    mapshed_endpoint: str = modeling_endpoint + "mapshed/"
+    gwlfe_endpoint: str = modeling_endpoint + "gwlfe/"
+    tr55_endpoint: str = modeling_endpoint + "tr55/"
 
     # NOTE:  These are NLCD layers ONLY!  The Shippensburg 2100 predictions are called
     # from the Drexel-provided API, and are not available as a geoprocessing layer
     # from https://github.com/WikiWatershed/model-my-watershed/blob/develop/src/mmw/js/src/modeling/utils.js
-    land_use_layers = {
+    land_use_layers: Dict[str, str] = {
         "nlcd-2019-30m-epsg5070-512-byte": "nlcd_2019_2019",
         "nlcd-2016-30m-epsg5070-512-byte": "nlcd_2019_2016",
         "nlcd-2011-30m-epsg5070-512-byte": "nlcd_2019_2011",
@@ -87,7 +96,7 @@ class ModelMyWatershedAPI:
     # conversion dictionaries
     # dictionary for converting NLCD types to those used by MapShed
     # we need the land use modifications for the Shippensburg 2100 predictions
-    nlcd_to_mapshed = {
+    nlcd_to_mapshed: Dict[str, str] = {
         "Pasture/Hay": "01-Hay/Past",
         "Cultivated Crops": "02-Cropland",
         "Deciduous Forest": "03-Forest",
@@ -106,7 +115,7 @@ class ModelMyWatershedAPI:
         "Open Water": None,
     }
     # the actual modification area value is a little different
-    mapshed_to_area_id = {
+    mapshed_to_area_id: Dict[str, str] = {
         "01-Hay/Past": "Area__0",
         "02-Cropland": "Area__1",
         "03-Forest": "Area__2",
@@ -120,12 +129,14 @@ class ModelMyWatershedAPI:
     }
 
     # The hash for no-modifications
-    inputmod_hash = "d751713988987e9331980363e24189ced751713988987e9331980363e24189ce"
+    inputmod_hash: str = (
+        "d751713988987e9331980363e24189ced751713988987e9331980363e24189ce"
+    )
 
     def __init__(
         self,
         api_key: str,
-        save_path: str=None,
+        save_path: str = None,
         use_staging: bool = False,
     ):
         """Create a new class for accessing ModelMyWatershed's API's
@@ -287,7 +298,7 @@ class ModelMyWatershedAPI:
 
         self.mmw_session.headers.update(headers)
 
-    def pprint_endpoint(self, request_endpoint):
+    def pprint_endpoint(self, request_endpoint) -> None:
         return (
             request_endpoint.replace(self.analyze_endpoint, "")
             .replace(self.modeling_endpoint, "")
@@ -453,7 +464,7 @@ class ModelMyWatershedAPI:
                 return finished_job_dict
             try:
                 job_results_req.json()
-            except Exception as ex:
+            except requests.exceptions.JSONDecodeError:
                 is_error = True
                 print("\t***Proper JSON not returned to job result request!***")
                 print(
@@ -548,6 +559,15 @@ class ModelMyWatershedAPI:
         return finished_job_dict
 
     def get_dump_filename(self, request_endpoint: str, job_label: str) -> str:
+        """Returns the expected generated file name for a json returned by ModelMyWatershed
+
+        Args:
+            request_endpoint (str): The endpoint of the request
+            job_label (str): custom job label for the request
+
+        Returns:
+            str: a conventioned file name
+        """
         return (
             self.json_dump_path
             + job_label.replace("/", "_").strip(" _")
@@ -563,6 +583,17 @@ class ModelMyWatershedAPI:
         alt_filename: str = "",
         needed_result_key: str = "",
     ) -> ModelMyWatershedJob:
+        """Reads a json file saved by this library with its file naming convention back into memory.
+
+        Args:
+            request_endpoint (str): The request endpoint that was used
+            job_label (str): the custom job label
+            alt_filename (str, optional): an alternate file name to look for, if the file was saved with a name other than that generated by `get_dump_filename(...)`. Defaults to "".
+            needed_result_key (str, optional): The key in the json for the results, if the json was saved external to this library.. Defaults to "".
+
+        Returns:
+            ModelMyWatershedJob: A python dictionary made from the saved file.
+        """
 
         saved_result = None
         req_dump = None
@@ -621,6 +652,15 @@ class ModelMyWatershedAPI:
     def run_batch_analysis(
         self, list_of_aois: List, analysis_endpoint: str
     ) -> pd.DataFrame:
+        """Given a list of areas of interest (AOIs), runs all of them for the same analysis endpoint.  Depending on the number of site in the list, this may take a very long time to return.
+
+        Args:
+            list_of_aois (List): A list of AOI's.  They can be strings or geojsons.
+            analysis_endpoint (str): The analysis endpoint to use.
+
+        Returns:
+            pd.DataFrame: A pandas data frame with the results from all of the runs.
+        """
         run_frames = []
         run_number: int = 1
         for aoi in list_of_aois:
@@ -686,7 +726,16 @@ class ModelMyWatershedAPI:
 
     def run_batch_gwlfe(
         self, list_of_aois: List, layer_overrides: ModemMyWatershedLayerOverride = None
-    ) -> pd.DataFrame:
+    ) -> Dict[str,pd.DataFrame]:
+        """Given a list of areas of interest (AOIs), runs mapshed and GWLF-E on all of them.
+
+        Args:
+            list_of_aois (List): A list of AOI's.  They can be strings or geojsons.
+            layer_overrides (ModemMyWatershedLayerOverride): Any layer overrides to use in the model
+
+        Returns:
+            Dict[str,pd.DataFrame]: A dictionary of dataframes with the GWLF-E model results.
+        """
         # empty lists to hold results
         mapshed_z_files = []
 
