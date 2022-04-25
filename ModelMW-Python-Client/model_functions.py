@@ -74,8 +74,8 @@ class ModelMyWatershedAPI:
     srat_endpoint: str = analyze_endpoint + "catchment-water-quality/"
     catchment_water_quality_endpoint: str = srat_endpoint
 
-    lu_endpoint_nlcd: str = analyze_endpoint + "land/{}/"
-    lu_endpoint_2100: str = analyze_endpoint + "drb-2100-land/{}/"
+    land_endpoint: str = analyze_endpoint + "land/{}/"
+    forcast_endpoint: str = analyze_endpoint + "drb-2100-land/{}/"
 
     mapshed_endpoint: str = modeling_endpoint + "mapshed/"
     gwlfe_endpoint: str = modeling_endpoint + "gwlfe/"
@@ -85,12 +85,12 @@ class ModelMyWatershedAPI:
     # from the Drexel-provided API, and are not available as a geoprocessing layer
     # from https://github.com/WikiWatershed/model-my-watershed/blob/develop/src/mmw/js/src/modeling/utils.js
     land_use_layers: Dict[str, str] = {
-        "nlcd-2019-30m-epsg5070-512-byte": "nlcd_2019_2019",
-        "nlcd-2016-30m-epsg5070-512-byte": "nlcd_2019_2016",
-        "nlcd-2011-30m-epsg5070-512-byte": "nlcd_2019_2011",
-        "nlcd-2006-30m-epsg5070-512-byte": "nlcd_2019_2006",
-        "nlcd-2001-30m-epsg5070-512-byte": "nlcd_2019_2001",
-        "nlcd-2011-30m-epsg5070-512-int8": "nlcd_2011_2011",
+        "nlcd-2019-30m-epsg5070-512-byte": "2019_2019",
+        "nlcd-2016-30m-epsg5070-512-byte": "2019_2016",
+        "nlcd-2011-30m-epsg5070-512-byte": "2019_2011",
+        "nlcd-2006-30m-epsg5070-512-byte": "2019_2006",
+        "nlcd-2001-30m-epsg5070-512-byte": "2019_2001",
+        "nlcd-2011-30m-epsg5070-512-int8": "2011_2011",
     }
 
     # conversion dictionaries
@@ -298,7 +298,12 @@ class ModelMyWatershedAPI:
 
         self.mmw_session.headers.update(headers)
 
-    def pprint_endpoint(self, request_endpoint) -> None:
+    def pprint_endpoint(self, request_endpoint: str) -> None:
+        """Prints out the request endpoing in a format usable for a Windows endpoint
+
+        Args:
+            request_endpoint (string): the request endpoing
+        """
         return (
             request_endpoint.replace(self.analyze_endpoint, "")
             .replace(self.modeling_endpoint, "")
@@ -693,12 +698,6 @@ class ModelMyWatershedAPI:
                 params = None
                 payload = aoi
 
-            req_dump = self.run_mmw_job(
-                request_endpoint=analysis_endpoint,
-                job_label=job_label,
-                params=params,
-                payload=payload,
-            )
             try:
                 req_dump = self.run_mmw_job(
                     request_endpoint=analysis_endpoint,
@@ -726,7 +725,7 @@ class ModelMyWatershedAPI:
 
     def run_batch_gwlfe(
         self, list_of_aois: List, layer_overrides: ModemMyWatershedLayerOverride = None
-    ) -> Dict[str,pd.DataFrame]:
+    ) -> Dict[str, pd.DataFrame]:
         """Given a list of areas of interest (AOIs), runs mapshed and GWLF-E on all of them.
 
         Args:
@@ -852,43 +851,37 @@ class ModelMyWatershedAPI:
         gwlfe_results["gwlfe_summaries"] = pd.concat(gwlfe_summaries, ignore_index=True)
         return gwlfe_results
 
-    # note:  In the ModelMyWatershed javascript, the mapshed total area value is called the "autoTotal" and the analysis-derived total area is called the "presetTotal".  I do not understand at all why they aren't the same.
-
-    # var totalArea = _.sum(attrs.dataModel['Area']);
-    # this.set({
-    #     autoTotal: totalArea,
-    #     userTotal: totalArea,
-    # });
-    # // ^^^ attrs.dataModel['Area'] = mapshed_result['Area']
-
-    # var m2ToHa = function(m2) { return m2 / coreUnits.METRIC.AREA_L.factor; },
-    # // ^^^ coreUnits.METRIC.AREA_L.factor = 0.001
-
-    # // Convert list of NLCD results to dictionary mapping
-    # // NLCD to Hectares
-    # nlcd = categories.reduce(function(acc, category) {
-    #         acc[category.nlcd] = category.area;
-    #         return acc;
-    #     }, {}),
-    # // ^^ This jusr reduces the complex object of the categoies to a simple array of only the category numbers and values
-
-    # landcoverRaw = modelingUtils.nlcdToMapshedLandCover(nlcd).map(m2ToHa),
-    # // ^^^ convert m2 to ha, and re-assign to MapShed cover types
-
-    # // Proportion land cover with base NLCD 2011 total
-    # // so that the user doesn't have to manually update it
-    # autoTotal = self.model.get('autoTotal'),
-    # presetTotal = _.sum(landcoverRaw),
-    # landcover = landcoverRaw.map(function(l) {
-    #     return l * autoTotal / presetTotal;
-    # });
-
     def dump_land_use_modifications(
         self,
         landuse_job_label: str,
         modified_land_use_source: str,
         base_land_use_source: str,
-    ):
+    ) -> Dict:
+        """Converts the Shippensburg generated predictions of land uses in 2100 within
+        the Delaware River Watershed into a set of modifications that can be applied
+        to other land use layers in order to model the 2100 predictions for an area.
+        This function expects that you have already run both the analysis for the 2100
+        predictions and a mapshed job for the underlying data and have saved both using
+        the default file naming conventions used within this library.  The result from
+        this function is *not* a new model result, but instead a dictionary of
+        modifications that can be fed back in to a model job.
+
+        NOTE:  The modifications applied by ModelMyWatershed for GWLF-E are **NOT**
+        geolocated in the way the baselayers are.  This means that when the 2100
+        predicted land uses are applied as modification, any information about the soil
+        type or geology of the changed area is lost.
+
+        Args:
+            landuse_job_label (str): The custom "label" used for both the land-use
+                analysis job and the initial mapshed preparation run for GWLF-E.
+            modified_land_use_source (str): The analysis data to be used as the source
+                of land use modification.  Should be either 'centers' or 'corridors'.
+            base_land_use_source (str): The base land use to modify.  Should be a
+                value from land_use_layers.
+
+        Returns:
+            Dict: a dictionary of land use modifications
+        """
         baselayer_ms_job_label = "{}_nlcd_{}".format(
             landuse_job_label, base_land_use_source
         )
@@ -897,9 +890,9 @@ class ModelMyWatershedAPI:
             modified_land_use_source == "centers"
             or modified_land_use_source == "corridors"
         ):
-            lu_endpoint = self.lu_endpoint_2100.format(modified_land_use_source)
+            lu_endpoint = self.forcast_endpoint.format(modified_land_use_source)
         else:
-            lu_endpoint = self.lu_endpoint_nlcd.format(modified_land_use_source)
+            lu_endpoint = self.land_endpoint.format(modified_land_use_source)
 
         _, lu_modifications = self.read_dumped_result(
             lu_endpoint,
@@ -914,6 +907,37 @@ class ModelMyWatershedAPI:
             self.json_dump_path + "{}_mapshed.json".format(baselayer_ms_job_label),
             "Area",
         )
+
+        # note:  In the ModelMyWatershed javascript, the mapshed total area value is called the "autoTotal" and the analysis-derived total area is called the "presetTotal".  I do not understand at all why they aren't the same.
+
+        # var totalArea = _.sum(attrs.dataModel['Area']);
+        # this.set({
+        #     autoTotal: totalArea,
+        #     userTotal: totalArea,
+        # });
+        # // ^^^ attrs.dataModel['Area'] = mapshed_result['Area']
+
+        # var m2ToHa = function(m2) { return m2 / coreUnits.METRIC.AREA_L.factor; },
+        # // ^^^ coreUnits.METRIC.AREA_L.factor = 0.001
+
+        # // Convert list of NLCD results to dictionary mapping
+        # // NLCD to Hectares
+        # nlcd = categories.reduce(function(acc, category) {
+        #         acc[category.nlcd] = category.area;
+        #         return acc;
+        #     }, {}),
+        # // ^^ This jusr reduces the complex object of the categoies to a simple array of only the category numbers and values
+
+        # landcoverRaw = modelingUtils.nlcdToMapshedLandCover(nlcd).map(m2ToHa),
+        # // ^^^ convert m2 to ha, and re-assign to MapShed cover types
+
+        # // Proportion land cover with base NLCD 2011 total
+        # // so that the user doesn't have to manually update it
+        # autoTotal = self.model.get('autoTotal'),
+        # presetTotal = _.sum(landcoverRaw),
+        # landcover = landcoverRaw.map(function(l) {
+        #     return l * autoTotal / presetTotal;
+        # });
 
         if lu_modifications is not None and mapshed_base is not None:
             lu_modified = pd.DataFrame(lu_modifications["survey"]["categories"]).rename(

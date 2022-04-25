@@ -124,9 +124,9 @@ for _, wkaoi in wkaois.iterrows():
     ]:
         lu_job_label = wkaoi[huc_name_str]
         if land_use_source == "centers" or land_use_source == "corridors":
-            lu_endpoint = mmw_run.lu_endpoint_2100.format(land_use_source)
+            lu_endpoint = mmw_run.forcast_endpoint.format(land_use_source)
         else:
-            lu_endpoint = mmw_run.lu_endpoint_nlcd.format(land_use_source)
+            lu_endpoint = mmw_run.land_endpoint.format(land_use_source)
 
         lu_properties = None
         _, lu_properties = mmw_run.read_dumped_result(
