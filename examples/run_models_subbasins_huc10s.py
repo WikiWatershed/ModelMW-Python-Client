@@ -17,6 +17,10 @@ import json
 
 from modelmw_client import *
 
+import logging
+logging.basicConfig()
+logging.getLogger('modelmw_client').setLevel(logging.INFO)
+
 
 #%%  Read location data
 from mmw_secrets import (
