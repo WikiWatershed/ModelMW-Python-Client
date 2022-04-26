@@ -62,7 +62,7 @@ class ModelMyWatershedAPI:
 
     api_endpoint: str = "api/"
     analyze_endpoint: str = api_endpoint + "analyze/"
-    modeling_endpoint: str = "mmw/modeling/"
+    modeling_endpoint: str = api_endpoint + "modeling/"
 
     streams_endpoint: str = analyze_endpoint + "streams/"
     protected_lands_endpoint: str = analyze_endpoint + "protected-lands/"
@@ -77,8 +77,10 @@ class ModelMyWatershedAPI:
     land_endpoint: str = analyze_endpoint + "land/{}/"
     forcast_endpoint: str = analyze_endpoint + "drb-2100-land/{}/"
 
-    mapshed_endpoint: str = modeling_endpoint + "mapshed/"
-    gwlfe_endpoint: str = modeling_endpoint + "gwlfe/"
+    gwlfe_prepare_endpoint: str = modeling_endpoint + "gwlf-e/prepare/"
+    mapshed_endpoint: str = gwlfe_prepare_endpoint
+    gwlfe_run_endpoint: str = modeling_endpoint + "gwlf-e/run/"
+    gwlfe_endpoint: str = gwlfe_run_endpoint
     tr55_endpoint: str = modeling_endpoint + "tr55/"
 
     # NOTE:  These are NLCD layers ONLY!  The Shippensburg 2100 predictions are called
@@ -523,8 +525,8 @@ class ModelMyWatershedAPI:
         self,
         request_endpoint: str,
         job_label: str,
-        params: Dict = None,
-        payload: Dict = None,
+        params: Union[Dict, None] = None,
+        payload: Union[Dict, None] = None,
     ) -> ModelMyWatershedJob:
         """Starts a ModelMyWatershed job and waits for and returns the results
 
@@ -749,6 +751,7 @@ class ModelMyWatershedAPI:
             mapshed_payload = {}
             if layer_overrides is not None:
                 mapshed_payload["layer_overrides"] = layer_overrides
+
             # TODO(SRGDamia1): validate strings
             # if it's a string with underscores, we're assuming it's a WKAoI from the hidden well-known area of interest table
             # this is not expected, but we'll support it
@@ -777,9 +780,10 @@ class ModelMyWatershedAPI:
 
             mapshed_job_id = None
             mapshed_result = None
+            gwlfe_result = None
 
             mapshed_job_dict = self.run_mmw_job(
-                request_endpoint=self.mapshed_endpoint,
+                request_endpoint=self.gwlfe_prepare_endpoint,
                 job_label=job_label,
                 params=None,
                 payload=mapshed_payload,
@@ -790,9 +794,6 @@ class ModelMyWatershedAPI:
 
                 mapshed_result["job_label"] = job_label
                 mapshed_z_files.append(mapshed_result)
-
-            ## Run GWLF-E once for each layer, and then two more times for the
-            # centers and coridors modifications of the 2011 data
 
             ## NOTE:  Don't run GWLF-E if we don't get MapShed results
             if mapshed_job_id is not None and mapshed_result is not None:
@@ -806,10 +807,10 @@ class ModelMyWatershedAPI:
                     # re-run the job
                     "inputmod_hash": self.inputmod_hash,
                     "modifications": land_use_modification_set,
-                    "mapshed_job_uuid": mapshed_job_id,
+                    "job_uuid": mapshed_job_id,
                 }
                 gwlfe_job_dict = self.run_mmw_job(
-                    request_endpoint=self.gwlfe_endpoint,
+                    request_endpoint=self.gwlfe_run_endpoint,
                     job_label=job_label,
                     params=None,
                     payload=gwlfe_payload,
@@ -902,7 +903,7 @@ class ModelMyWatershedAPI:
             "survey",
         )
         _, mapshed_base = self.read_dumped_result(
-            self.mapshed_endpoint,
+            self.gwlfe_prepare_endpoint,
             baselayer_ms_job_label,
             self.json_dump_path + "{}_mapshed.json".format(baselayer_ms_job_label),
             "Area",

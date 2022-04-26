@@ -37,7 +37,7 @@ mmw_run = ModelMyWatershedAPI(save_path, srgd_staging_api_key, True)
 mmw_run.login(mmw_user=srgd_mmw_user, mmw_pass=srgd_mmw_pass)
 
 # https://www.njstormwater.org/pdf/SMDR_Stormwater_Calculations_Slides.pdf
-tr5_rain_inches = 3.33
+tr55_rain_inches = 3.33
 
 huc_name_str = "HUC Name"
 huc_code_str = "HUC Code"
@@ -184,7 +184,7 @@ for idx, wkaoi in wkaois.iterrows():
 
             gwlfe_result = None
             _, gwlfe_result = mmw_run.read_dumped_result(
-                mmw_run.gwlfe_endpoint,
+                mmw_run.gwlfe_run_endpoint,
                 gwlfe_job_label,
                 json_dump_path + "{}_gwlfe.json".format(gwlfe_job_label),
                 "SummaryLoads",
@@ -200,7 +200,7 @@ for idx, wkaoi in wkaois.iterrows():
                 mapshed_req_dump = None
                 mapshed_result = None
                 mapshed_req_dump, mapshed_result = mmw_run.read_dumped_result(
-                    mmw_run.mapshed_endpoint,
+                    mmw_run.gwlfe_prepare_endpoint,
                     mapshed_job_label,
                     json_dump_path + "{}_mapshed.json".format(mapshed_job_label),
                     "Area",
@@ -239,7 +239,7 @@ for idx, wkaoi in wkaois.iterrows():
                     mapshed_payload = {"mapshed_input": mapshed_input}
 
                     mapshed_job_dict = mmw_run.run_mmw_job(
-                        request_endpoint=mmw_run.mapshed_endpoint,
+                        request_endpoint=mmw_run.gwlfe_prepare_endpoint,
                         job_label=mapshed_job_label,
                         params=None,
                         payload=mapshed_payload,
@@ -274,7 +274,7 @@ for idx, wkaoi in wkaois.iterrows():
                         "mapshed_job_uuid": mapshed_job_id,
                     }
                     gwlfe_job_dict = mmw_run.run_mmw_job(
-                        request_endpoint=mmw_run.gwlfe_endpoint,
+                        request_endpoint=mmw_run.gwlfe_run_endpoint,
                         job_label=gwlfe_job_label,
                         params=None,
                         payload=gwlfe_payload,
@@ -323,7 +323,7 @@ for idx, wkaoi in wkaois.iterrows():
             "inputs": [
                 {
                     "name": "precipitation",
-                    "value": tr5_rain_inches,
+                    "value": tr55_rain_inches,
                     "type": "",
                     "effectiveArea": None,
                     "effectiveUnits": None,

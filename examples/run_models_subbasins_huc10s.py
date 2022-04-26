@@ -95,7 +95,7 @@ for idx, wkaoi in wkaois.iterrows():
             )
 
             _, gwlfe_result = mmw_run.read_dumped_result(
-                mmw_run.gwlfe_endpoint,
+                mmw_run.gwlfe_run_endpoint,
                 gwlfe_job_label,
                 "",
                 "SummaryLoads",
@@ -109,7 +109,7 @@ for idx, wkaoi in wkaois.iterrows():
 
                 mapshed_job_id = None
                 mapshed_req_dump, mapshed_result = mmw_run.read_dumped_result(
-                    mmw_run.mapshed_endpoint,
+                    mmw_run.gwlfe_prepare_endpoint,
                     mapshed_job_label,
                     "",
                     "Area",
@@ -148,7 +148,7 @@ for idx, wkaoi in wkaois.iterrows():
                     mapshed_payload = {"mapshed_input": mapshed_input}
 
                     mapshed_job_dict = mmw_run.run_mmw_job(
-                        request_endpoint=mmw_run.mapshed_endpoint,
+                        request_endpoint=mmw_run.gwlfe_prepare_endpoint,
                         job_label=mapshed_job_label,
                         params={"subbasin": "true"},
                         payload=mapshed_payload,
@@ -183,7 +183,7 @@ for idx, wkaoi in wkaois.iterrows():
                         "mapshed_job_uuid": mapshed_job_id,
                     }
                     gwlfe_job_dict = mmw_run.run_mmw_job(
-                        request_endpoint=mmw_run.gwlfe_endpoint,
+                        request_endpoint=mmw_run.gwlfe_run_endpoint,
                         job_label=gwlfe_job_label,
                         params={"subbasin": "true"},
                         payload=gwlfe_payload,
