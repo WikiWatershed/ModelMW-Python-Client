@@ -206,7 +206,7 @@ class ModelMyWatershedAPI:
     def print_req(
         self,
         the_request: requests.Response,
-        logging_level: logging._Level = logging.TRACE,
+        logging_level: int = logging.DEBUG,
     ) -> None:
         """Helper function for tracing errors in requests - Prints out the request input
 
@@ -232,7 +232,7 @@ class ModelMyWatershedAPI:
     def print_req_trace(
         self,
         the_request: requests.Response,
-        logging_level: logging._Level = logging.TRACE,
+        logging_level: int = logging.DEBUG,
     ) -> None:
         """Helper function for tracing errors in requests - Prints out the request input and response
 
@@ -243,7 +243,7 @@ class ModelMyWatershedAPI:
         if the_request.history:
             self.api_logger.trace("\nRequest was redirected")
             for resp in the_request.history:
-                self.print_req(resp, logging.TRACE)
+                self.print_req(resp, logging.DEBUG)
             self.api_logger.trace("\n\nFinal destination:")
             self.print_req(the_request, logging_level)
         else:
@@ -366,14 +366,14 @@ class ModelMyWatershedAPI:
                 data=payload_compressed,
                 params=params,
             )
-            # self.print_req_trace(start_job,logging.TRACE)
+            # self.print_req_trace(start_job,logging.DEBUG)
 
             throttle_time = 30.0
             if start_job.status_code != 200:
                 self.api_logger.error(
                     "\t***ERROR STARTING JOB***\n\t{}".format(start_job.content)
                 )
-                self.print_req_trace(start_job, logging.DEBUG)
+                self.print_req_trace(start_job, logging.ERROR)
                 try:
                     detail = json.loads(start_job.content)["detail"]
                     if "throttled" in detail:
@@ -485,7 +485,7 @@ class ModelMyWatershedAPI:
                         job_results_req.content
                     )
                 )
-                self.print_req_trace(job_results_req, logging.DEBUG)
+                self.print_req_trace(job_results_req, logging.ERROR)
                 return finished_job_dict
             try:
                 job_results_req.json()
