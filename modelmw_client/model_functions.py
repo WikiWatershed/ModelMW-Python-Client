@@ -273,7 +273,7 @@ class ModelMyWatershedAPI:
             print("Failed to log in: {}".format(ex))
             return False
 
-        print("\nSession cookies: {}".format(self.mmw_session.cookies))
+        # print("\nSession cookies: {}".format(self.mmw_session.cookies))
         return True
 
     def set_request_headers(self, request_endpoint: str) -> None:

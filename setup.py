@@ -6,16 +6,15 @@ LONG_DESCRIPTION = 'A python client for accessing analysis and modeling data fro
 
 # Setting up
 setup(
-       # the name must match the folder name 'verysimplemodule'
-        name="ModelMW-Python-Client",
+        name="modelmw_client",
         version=VERSION,
         author="Sara Geleskie Damiano",
         author_email="<sdamiano@stoudcenter.org>",
         description=DESCRIPTION,
         long_description=LONG_DESCRIPTION,
         packages=find_packages(),
-        install_requires=[], # add any additional packages that
-        # needs to be installed along with your package. Eg: 'caer'
+        install_requires=['requests', 'pandas'],
+
 
         keywords=['ModelMyWatershed', 'WikiWatershed', 'ModelMW'],
         classifiers= [
