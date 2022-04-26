@@ -2,13 +2,14 @@
 Created by Sara Geleskie Damiano
 """
 #%%
-import sys
 import time
 import copy
 import re
 from pathlib import Path
-from collections import OrderedDict
+
+from typing import Dict, List, TypedDict, Union, Any
 from typing_extensions import NotRequired
+from collections import OrderedDict
 
 import requests
 from requests import Session
@@ -18,24 +19,9 @@ from urllib3.util.retry import Retry
 import pandas as pd
 
 import json
+import logging
 
-from typing import Dict, List, TypedDict, Union, Any
-
-#%%
-# import logging
-# # These two lines enable debugging at httplib level (requests->urllib3->http.client)
-# # You will see the REQUEST, including HEADERS and DATA, and RESPONSE with HEADERS but without DATA.
-# # The only thing missing will be the response.body which is not logged.
-# try:
-#     import http.client as http_client
-# http_client.HTTPConnection.debuglevel = 1
-
-# # You must initialize logging, otherwise you'll not see debug output.
-# logging.basicConfig()
-# logging.getLogger().setLevel(logging.DEBUG)
-# requests_log = logging.getLogger("requests.packages.urllib3")
-# requests_log.setLevel(logging.DEBUG)
-# requests_log.propagate = True
+module_logger = logging.getLogger(__name__)
 
 
 #%%
@@ -56,15 +42,19 @@ class ModemMyWatershedLayerOverride(TypedDict):
 
 
 class ModelMyWatershedAPI:
+    api_logger = module_logger.getChild(__qualname__)
+
     # the ModelMyWatershed page
     staging_mmw_host: str = "https://staging.modelmywatershed.org"
     production_mmw_host: str = "https://modelmywatershed.org"
 
+    # low level endpoints
     api_endpoint: str = "api/"
     analyze_endpoint: str = api_endpoint + "analyze/"
     modeling_endpoint: str = api_endpoint + "modeling/"
     old_modeling_endpoint: str = "mmw/modeling/"
 
+    # simple analysis endpoings
     streams_endpoint: str = analyze_endpoint + "streams/"
     protected_lands_endpoint: str = analyze_endpoint + "protected-lands/"
     soil_endpoint: str = analyze_endpoint + "soil/"
@@ -75,17 +65,21 @@ class ModelMyWatershedAPI:
     srat_endpoint: str = analyze_endpoint + "catchment-water-quality/"
     catchment_water_quality_endpoint: str = srat_endpoint
 
+    # more detailed analysis endpoints
     land_endpoint: str = analyze_endpoint + "land/{}/"
     forcast_endpoint: str = analyze_endpoint + "drb-2100-land/{}/"
 
+    # GWLF-E endpoints
     gwlfe_prepare_endpoint: str = modeling_endpoint + "gwlf-e/prepare/"
     mapshed_endpoint: str = gwlfe_prepare_endpoint
     gwlfe_run_endpoint: str = modeling_endpoint + "gwlf-e/run/"
     gwlfe_endpoint: str = gwlfe_run_endpoint
 
+    # Subbasin (GWLF-E) endpoints
     subbasin_prepare_endpoint: str = modeling_endpoint + "subbasin/prepare/"
     subbasin_run_endpoint: str = modeling_endpoint + "subbasin/run/"
 
+    # TR-55 (Site Storm Model) endpoint
     tr55_endpoint: str = old_modeling_endpoint + "tr55/"
 
     # NOTE:  These are NLCD layers ONLY!  The Shippensburg 2100 predictions are called
@@ -209,14 +203,20 @@ class ModelMyWatershedAPI:
             out_str += "\t{}: {}\n".format(header, headers[header])
         return out_str
 
-    def print_req(self, the_request: requests.Response) -> None:
+    def print_req(
+        self,
+        the_request: requests.Response,
+        logging_level: logging._Level = logging.TRACE,
+    ) -> None:
         """Helper function for tracing errors in requests - Prints out the request input
 
         Args:
             the_request (requests.Response): The response object from the request
+            logging_level (logging._Level): The logging level to use for the request
         """
         print_format = "\nRequest:\nmethod: {}\nurl: {}\nheaders:\n{}\nbody: {}\n\nResponse:\nstatus code: {}\nurl: {}\nheaders: {}\ncookies: {}"
-        print(
+        self.api_logger.log(
+            logging_level,
             print_format.format(
                 the_request.request.method,
                 the_request.request.url,
@@ -226,23 +226,28 @@ class ModelMyWatershedAPI:
                 the_request.url,
                 self.print_headers(the_request.headers),
                 the_request.cookies,
-            )
+            ),
         )
 
-    def print_req_trace(self, the_request: requests.Response) -> None:
+    def print_req_trace(
+        self,
+        the_request: requests.Response,
+        logging_level: logging._Level = logging.TRACE,
+    ) -> None:
         """Helper function for tracing errors in requests - Prints out the request input and response
 
         Args:
             the_request (requests.Response): The response object from the request
+            logging_level (logging._Level): The logging level to use for the request
         """
         if the_request.history:
-            print("\nRequest was redirected")
+            self.api_logger.trace("\nRequest was redirected")
             for resp in the_request.history:
-                self.print_req(resp)
-            print("\n\nFinal destination:")
-            self.print_req(the_request)
+                self.print_req(resp, logging.TRACE)
+            self.api_logger.trace("\n\nFinal destination:")
+            self.print_req(the_request, logging_level)
         else:
-            self.print_req(the_request)
+            self.print_req(the_request, logging_level)
 
     def login(self, mmw_user: str, mmw_pass: str) -> bool:
         """Log in to the ModelMyWatershed API
@@ -277,10 +282,10 @@ class ModelMyWatershedAPI:
                 {"X-CSRFToken": self.mmw_session.cookies["csrftoken"]}
             )
         except Exception as ex:
-            print("Failed to log in: {}".format(ex))
+            self.api_logger.warn("Failed to log in: {}".format(ex))
             return False
 
-        # print("\nSession cookies: {}".format(self.mmw_session.cookies))
+        # self.api_logger.trace("\nSession cookies: {}".format(self.mmw_session.cookies))
         return True
 
     def set_request_headers(self, request_endpoint: str) -> None:
@@ -361,12 +366,14 @@ class ModelMyWatershedAPI:
                 data=payload_compressed,
                 params=params,
             )
-            # self.print_req_trace(start_job)
+            # self.print_req_trace(start_job,logging.TRACE)
 
             throttle_time = 30.0
             if start_job.status_code != 200:
-                print("\t***ERROR STARTING JOB***\n\t{}".format(start_job.content))
-                self.print_req_trace(start_job)
+                self.api_logger.error(
+                    "\t***ERROR STARTING JOB***\n\t{}".format(start_job.content)
+                )
+                self.print_req_trace(start_job, logging.DEBUG)
                 try:
                     detail = json.loads(start_job.content)["detail"]
                     if "throttled" in detail:
@@ -381,35 +388,41 @@ class ModelMyWatershedAPI:
                     else:
                         return job_dict
                 except Exception as ex:
-                    print("\tUnexpected exception:", ex)
+                    self.api_logger.warn("\tUnexpected exception:", ex)
                     return job_dict
 
             resp_json = None
             try:
                 resp_json = start_job.json(object_pairs_hook=OrderedDict)
             except Exception as ex:
-                print("\t***Proper JSON not returned for start job request!***")
-                print("\t***Got {} with text {}!***".format(start_job, start_job.text))
+                self.api_logger.error(
+                    "\t***Proper JSON not returned for start job request!***"
+                )
+                self.api_logger.debug(
+                    "\t***Got {} with text {}!***".format(start_job, start_job.text)
+                )
 
             if (
                 resp_json is not None
                 and "job" in resp_json.keys()
                 and resp_json["job"] is not None
             ):
-                print(
+                self.api_logger.info(
                     "\t{} job started for {}".format(
                         self.pprint_endpoint(request_endpoint), job_label
                     )
                 )
                 attempts = 5
 
-            # print("Start job result: {}".format(start_job.text))
+            # self.api_logger.trace("Start job result: {}".format(start_job.text))
             elif resp_json is not None and "job" not in start_job.json().keys():
-                print("\t***ERROR STARTING JOB***\n\t{}".format(start_job.json()))
+                self.api_logger.error(
+                    "\t***ERROR STARTING JOB***\n\t{}".format(start_job.json())
+                )
                 return job_dict
 
             elif throttle_time > 60.0 * 30.0:
-                print(
+                self.api_logger.warn(
                     "\twait time of {}s is too long, will not retry".format(
                         throttle_time
                     )
@@ -417,17 +430,17 @@ class ModelMyWatershedAPI:
                 attempts = 5
 
             elif throttle_time < 60.0 * 30.0 and attempts < 4:
-                print("\tretrying in {}s...".format(throttle_time))
+                self.api_logger.debug("\tretrying in {}s...".format(throttle_time))
                 time.sleep(throttle_time)
                 attempts += 1
 
             elif attempts < 4:
-                print("\tretrying in 30s...")
+                self.api_logger.debug("\tretrying in 30s...")
                 time.sleep(30)
                 attempts += 1
 
             else:
-                print("\t{} job FAILED".format(request_endpoint))
+                self.api_logger.warn("\t{} job FAILED".format(request_endpoint))
 
         job_dict["start_job_response"] = resp_json
         return job_dict
@@ -467,19 +480,21 @@ class ModelMyWatershedAPI:
         while is_finished == False and is_error == False:
             job_results_req = self.mmw_session.get(job_endpoint)
             if job_results_req.status_code != 200:
-                print(
+                self.api_logger.error(
                     "\t***ERROR GETTING JOB RESULT***\n\t{}".format(
                         job_results_req.content
                     )
                 )
-                self.print_req_trace(job_results_req)
+                self.print_req_trace(job_results_req, logging.DEBUG)
                 return finished_job_dict
             try:
                 job_results_req.json()
             except requests.exceptions.JSONDecodeError:
                 is_error = True
-                print("\t***Proper JSON not returned to job result request!***")
-                print(
+                self.api_logger.warn(
+                    "\t***Proper JSON not returned to job result request!***"
+                )
+                self.api_logger.debug(
                     "\t***Got {} with text {}!***".format(
                         job_results_req,
                         job_results_req.text,
@@ -490,7 +505,7 @@ class ModelMyWatershedAPI:
                 "error" in job_results_req.json().keys()
                 and job_results_req.json()["error"] != ""
             ):
-                print(
+                self.api_logger.error(
                     "\t***ERROR GETTING JOB RESULTS***\n\t{}".format(
                         job_results_req.json()["error"]
                     )
@@ -508,7 +523,7 @@ class ModelMyWatershedAPI:
             finished_job_dict["result_response"] = job_results_req.json(
                 object_pairs_hook=OrderedDict
             )
-            print(
+            self.api_logger.info(
                 "\tGot {} results for {}".format(
                     self.pprint_endpoint(start_job_dict["request_endpoint"]),
                     start_job_dict["job_label"],
@@ -559,7 +574,7 @@ class ModelMyWatershedAPI:
         ):
             time.sleep(3.5)  # max of 20 requests per minute!
         else:
-            print(
+            self.api_logger.warn(
                 "\t{} job FAILED for {}".format(
                     self.pprint_endpoint(start_job_dict["request_endpoint"]),
                     job_label,
@@ -653,7 +668,7 @@ class ModelMyWatershedAPI:
                     result_raw = req_dump
                     saved_result = copy.deepcopy(result_raw)["result"]
 
-            print(
+            self.api_logger.info(
                 "\tRead saved {} results for {} from JSON".format(
                     self.pprint_endpoint(request_endpoint),
                     job_label,
@@ -718,7 +733,7 @@ class ModelMyWatershedAPI:
                     )
                 )
             except Exception as ex:
-                print("\tUnexpected exception:\n\t{}".format(ex))
+                self.api_logger.warn("\tUnexpected exception:\n\t{}".format(ex))
                 continue
 
             res_frame["job_label"] = job_label
@@ -862,7 +877,7 @@ class ModelMyWatershedAPI:
         landuse_job_label: str,
         modified_land_use_source: str,
         base_land_use_source: str,
-    ) -> Dict:
+    ) -> Union[str, None]:
         """Converts the Shippensburg generated predictions of land uses in 2100 within
         the Delaware River Watershed into a set of modifications that can be applied
         to other land use layers in order to model the 2100 predictions for an area.
