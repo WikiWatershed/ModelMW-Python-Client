@@ -132,3 +132,4 @@ dmypy.json
 mmw_secrets.py
 .history/
 .vscode/
+examples/mmw_results/*

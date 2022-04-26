@@ -63,6 +63,7 @@ class ModelMyWatershedAPI:
     api_endpoint: str = "api/"
     analyze_endpoint: str = api_endpoint + "analyze/"
     modeling_endpoint: str = api_endpoint + "modeling/"
+    old_modeling_endpoint: str = "mmw/modeling/"
 
     streams_endpoint: str = analyze_endpoint + "streams/"
     protected_lands_endpoint: str = analyze_endpoint + "protected-lands/"
@@ -81,7 +82,11 @@ class ModelMyWatershedAPI:
     mapshed_endpoint: str = gwlfe_prepare_endpoint
     gwlfe_run_endpoint: str = modeling_endpoint + "gwlf-e/run/"
     gwlfe_endpoint: str = gwlfe_run_endpoint
-    tr55_endpoint: str = modeling_endpoint + "tr55/"
+
+    subbasin_prepare_endpoint: str = modeling_endpoint + "subbasin/prepare/"
+    subbasin_run_endpoint: str = modeling_endpoint + "subbasin/run/"
+
+    tr55_endpoint: str = old_modeling_endpoint + "tr55/"
 
     # NOTE:  These are NLCD layers ONLY!  The Shippensburg 2100 predictions are called
     # from the Drexel-provided API, and are not available as a geoprocessing layer
@@ -144,7 +149,7 @@ class ModelMyWatershedAPI:
         """Create a new class for accessing ModelMyWatershed's API's
 
         Args:
-            save_path (str): The path you want any feathers and json objects to be saved to
+            save_path (str): The path you want any json objects to be saved to
             api_key (str): Your API key (needed for analysis requests)
             use_staging (bool, optional): Use the staging version of ModelMyWatershed rather than the
                 production website. Defaults to False.
@@ -291,7 +296,7 @@ class ModelMyWatershedAPI:
                 "X-Requested-With": "XMLHttpRequest",
                 "Referer": "https://staging.modelmywatershed.org/analyze",
             }
-        elif self.modeling_endpoint in request_endpoint:
+        elif self.modeling_endpoint or self.old_modeling_endpoint in request_endpoint:
             headers = {
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "Referer": "https://staging.modelmywatershed.org/project/",
@@ -345,7 +350,7 @@ class ModelMyWatershedAPI:
         if self.api_endpoint in request_endpoint:
             # the api endpoint expects json, expected to be dumped from a dictionary
             payload_compressed = json.dumps(payload, separators=(",", ":"))
-        elif self.modeling_endpoint in request_endpoint:
+        elif self.old_modeling_endpoint in request_endpoint:
             # the modeling endpoint expects form data, that should be pre-prepared by the user
             payload_compressed = payload
 
@@ -453,9 +458,9 @@ class ModelMyWatershedAPI:
             job_endpoint = "{}/{}jobs/{}/".format(
                 self.mmw_host, self.api_endpoint, job_id
             )
-        elif self.modeling_endpoint in start_job_dict["request_endpoint"]:
+        elif self.old_modeling_endpoint in start_job_dict["request_endpoint"]:
             job_endpoint = "{}/{}jobs/{}/".format(
-                self.mmw_host, self.modeling_endpoint, job_id
+                self.mmw_host, self.old_modeling_endpoint, job_id
             )
 
         finished_job_dict = copy.deepcopy(start_job_dict)

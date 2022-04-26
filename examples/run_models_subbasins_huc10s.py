@@ -15,39 +15,31 @@ import pandas as pd
 
 import json
 
+from modelmw_client import *
+
 
 #%%  Read location data
-sys.path.append("C:\\Users\\sdamiano\\Desktop\\SRGD_ModelMyWatershed")
 from mmw_secrets import (
-    srgd_mmw_api_key,
     srgd_staging_api_key,
     srgd_mmw_user,
     srgd_mmw_pass,
     save_path,
-    feather_path,
+    csv_path,
     json_dump_path,
-    json_extension,
-    feather_extension,
+    csv_extension,
 )
-from model_functions import ModelMyWatershedAPI
 
 # Create an API user
-mmw_run = ModelMyWatershedAPI(save_path, srgd_staging_api_key, True)
+mmw_run = ModelMyWatershedAPI(srgd_staging_api_key, save_path, True)
 # Authenticate with MMW
 mmw_run.login(mmw_user=srgd_mmw_user, mmw_pass=srgd_mmw_pass)
 
-# https://www.njstormwater.org/pdf/SMDR_Stormwater_Calculations_Slides.pdf
-tr5_rain_inches = 3.33
-
-huc_name_str = "HUC Name"
-huc_code_str = "HUC Code"
-sort_cols = [huc_code_str, "Land_Use_Source"]
 base_nlcd_for_modifications = "2019_2019"
 
-#%%
-print("Reading the areas of interest")
-wkaois = pd.read_feather(feather_path + "wkaois" + feather_extension)
-wkaois = wkaois.loc[wkaois["wkaoi_code"] == "huc10"]
+# This is the HUC-10 for White Clay Creek
+huc_aois = [
+    "0204020503",
+]
 
 #%% empty lists to hold results
 mapshed_z_files = []
@@ -56,46 +48,34 @@ finished_sites = []
 catchment_nutrients = []
 
 #%%
-keep_cols = [
-    huc_name_str,
-    huc_code_str,
-    "State",
-    "wkaoi_code",
-    "wkaoi_id",
-    "Other Names",
-    "_huc_code_",
-]
 run_num = 0
-total_runs = len(wkaois.index) * len(mmw_run.land_use_layers.keys())
-for idx, wkaoi in wkaois.iterrows():
+total_runs = len(huc_aois) * len(mmw_run.land_use_layers.keys())
+for idx, huc_aoi in enumerate(huc_aois):
     for land_use_layer in mmw_run.land_use_layers.keys():
         run_num += 1
         print(
             "{} of {} =>".format(run_num, total_runs),
-            wkaoi["wkaoi_code"],
-            wkaoi[huc_name_str],
+            huc_aoi,
             land_use_layer,
         )
 
-        if mmw_run.land_use_layers[land_use_layer] == "nlcd_2019_2019":
+        if mmw_run.land_use_layers[land_use_layer] == "2019_2019":
             land_use_modifications = ["unmodified", "centers", "corridors"]
         else:
             land_use_modifications = ["unmodified"]  # {"unmodified": "[{}]"}
 
         for lu_mod in land_use_modifications:
 
-            if wkaoi["wkaoi_code"] != "huc10":
-                continue
-
             mapshed_job_label = "{}_{}_subbasin".format(
-                wkaoi[huc_name_str], mmw_run.land_use_layers[land_use_layer]
+                huc_aoi, mmw_run.land_use_layers[land_use_layer]
             )
             gwlfe_job_label = "{}_{}_{}_subbasin".format(
-                wkaoi[huc_name_str], mmw_run.land_use_layers[land_use_layer], lu_mod
+                huc_aoi, mmw_run.land_use_layers[land_use_layer], lu_mod
             )
 
+            gwlfe_result = None
             _, gwlfe_result = mmw_run.read_dumped_result(
-                mmw_run.gwlfe_run_endpoint,
+                mmw_run.subbasin_run_endpoint,
                 gwlfe_job_label,
                 "",
                 "SummaryLoads",
@@ -108,8 +88,10 @@ for idx, wkaoi in wkaois.iterrows():
                 # GWLF-E becaues the cache of the MapShed job will probably have expired
 
                 mapshed_job_id = None
+                mapshed_req_dump = None
+                mapshed_result = None
                 mapshed_req_dump, mapshed_result = mmw_run.read_dumped_result(
-                    mmw_run.gwlfe_prepare_endpoint,
+                    mmw_run.subbasin_prepare_endpoint,
                     mapshed_job_label,
                     "",
                     "Area",
@@ -139,25 +121,22 @@ for idx, wkaoi in wkaois.iterrows():
                 if mapshed_job_still_valid is False:
 
                     ## run MapShed once for each land use layer
-                    pre_mapshed_input = '{{"layer_overrides":{{"__LAND__": "{}"}},"wkaoi":"{}"}}'.format(
-                        land_use_layer, wkaoi["wkaoi"]
-                    ).replace(
-                        " ", ""
-                    )
-                    mapshed_input = pre_mapshed_input.replace("'", '"')
-                    mapshed_payload = {"mapshed_input": mapshed_input}
+                    mapshed_payload = {
+                        "huc": huc_aoi,
+                        "layer_overrides": {"__LAND__": land_use_layer},
+                    }
 
                     mapshed_job_dict = mmw_run.run_mmw_job(
-                        request_endpoint=mmw_run.gwlfe_prepare_endpoint,
+                        request_endpoint=mmw_run.subbasin_prepare_endpoint,
                         job_label=mapshed_job_label,
-                        params={"subbasin": "true"},
+                        params=None,
                         payload=mapshed_payload,
                     )
                     if "result_response" in mapshed_job_dict.keys():
                         mapshed_job_id = mapshed_job_dict["start_job_response"]["job"]
                         mapshed_result = mapshed_job_dict["result_response"]["result"]
 
-                        mapshed_result["wkaoi"] = wkaoi["wkaoi"]
+                        mapshed_result["huc_aoi"] = huc_aoi
                         mapshed_z_files.append(mapshed_result)
 
                 ## Run GWLF-E once for each layer, and then two more times for the
@@ -170,7 +149,7 @@ for idx, wkaoi in wkaois.iterrows():
                         land_use_modification_set = "[{}]"
                     else:
                         land_use_modification_set = mmw_run.dump_land_use_modifications(
-                            wkaoi[huc_name_str], lu_mod, base_nlcd_for_modifications
+                            huc_aoi, lu_mod, base_nlcd_for_modifications
                         )
 
                     gwlfe_payload = {
@@ -180,12 +159,12 @@ for idx, wkaoi in wkaois.iterrows():
                         # re-run the job
                         "inputmod_hash": mmw_run.inputmod_hash,
                         "modifications": land_use_modification_set,
-                        "mapshed_job_uuid": mapshed_job_id,
+                        "job_uuid": mapshed_job_id,
                     }
                     gwlfe_job_dict = mmw_run.run_mmw_job(
-                        request_endpoint=mmw_run.gwlfe_run_endpoint,
+                        request_endpoint=mmw_run.subbasin_run_endpoint,
                         job_label=gwlfe_job_label,
-                        params={"subbasin": "true"},
+                        params=None,
                         payload=gwlfe_payload,
                     )
                     if "result_response" in gwlfe_job_dict.keys():
@@ -217,8 +196,8 @@ catchment_nutrient_results = (
     .sort_values(by=["parent_huc", "ComID", "Land_Use_Source", "SRAT_Source"])
     .reset_index(drop=True)
 )
-catchment_nutrient_results.to_feather(
-    feather_path + "catchment_nutrient_results" + feather_extension
+catchment_nutrient_results.to_csv(
+    csv_path + "catchment_nutrient_results" + csv_extension
 )
 
 
