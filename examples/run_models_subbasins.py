@@ -137,7 +137,6 @@ for idx, huc_aoi in enumerate(huc_aois):
                     mapshed_job_dict = mmw_run.run_mmw_job(
                         request_endpoint=mmw_run.subbasin_prepare_endpoint,
                         job_label=mapshed_job_label,
-                        params=None,
                         payload=mapshed_payload,
                     )
                     if "result_response" in mapshed_job_dict.keys():
@@ -172,7 +171,6 @@ for idx, huc_aoi in enumerate(huc_aois):
                     gwlfe_job_dict = mmw_run.run_mmw_job(
                         request_endpoint=mmw_run.subbasin_run_endpoint,
                         job_label=gwlfe_job_label,
-                        params=None,
                         payload=gwlfe_payload,
                     )
                     if "result_response" in gwlfe_job_dict.keys():

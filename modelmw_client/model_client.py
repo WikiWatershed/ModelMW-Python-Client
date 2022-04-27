@@ -29,7 +29,6 @@ class ModelMyWatershedJob(TypedDict):
     job_label: str
     request_host: str
     request_endpoint: str
-    params: NotRequired[Dict]
     payload: NotRequired[Union[str, Dict]]
     start_job_response: NotRequired[Any]
     result_response: NotRequired[Any]
@@ -338,14 +337,12 @@ class ModelMyWatershedAPI:
         self,
         request_endpoint: str,
         job_label: str,
-        params: Dict = None,
         payload: Dict = None,
     ) -> ModelMyWatershedJob:
         """Starts an analysis or modeling job
 
         Args:
             request_endpoint (str): The endpoint for the request
-            params (Dict): The parameters of the request (the part of the url after the ?)
             payload (Dict): The payload going to the request.
                 Either a JSON serializable dictionary or pre-formatted form data.
             job_label (str): A label to use to save the output files
@@ -358,7 +355,6 @@ class ModelMyWatershedAPI:
             "request_host": self.mmw_host,
             "request_endpoint": request_endpoint,
             "payload": payload,
-            "params": params,
         }
 
         self.set_request_headers(request_endpoint)
@@ -374,7 +370,6 @@ class ModelMyWatershedAPI:
             start_job = self.mmw_session.post(
                 "{}/{}".format(self.mmw_host, request_endpoint),
                 data=payload_compressed,
-                params=params,
             )
             # self.print_req_trace(start_job,logging.DEBUG)
 
@@ -385,7 +380,9 @@ class ModelMyWatershedAPI:
                 )
                 self.print_req_trace(start_job, logging.ERROR)
                 try:
-                    detail = json.loads(start_job.content)["detail"]
+                    detail = json.loads(start_job.content)
+                    if type(detail) is dict and "detail" in detail.keys():
+                        detail=detail["detail"]
                     if "throttled" in detail:
                         search_pat = (
                             "Expected available in (?P<throttle_time>[\d\.]+) seconds."
@@ -555,14 +552,12 @@ class ModelMyWatershedAPI:
         self,
         request_endpoint: str,
         job_label: str,
-        params: Union[Dict, None] = None,
         payload: Union[Dict, None] = None,
     ) -> ModelMyWatershedJob:
         """Starts a ModelMyWatershed job and waits for and returns the results
 
         Args:
             request_endpoint (str): The endpoint for the request
-            params (Dict): The parameters of the request (the part of the url after the ?)
             payload (Dict): The payload going to the request.
                 Either a JSON serializable dictionary or pre-formatted form data.
             job_label (str): A label to use to save the output files
@@ -572,7 +567,6 @@ class ModelMyWatershedAPI:
         """
         start_job_dict = self.start_job(
             request_endpoint=request_endpoint,
-            params=params,
             payload=payload,
             job_label=job_label,
         )
@@ -594,6 +588,97 @@ class ModelMyWatershedAPI:
         finished_job_dict = copy.deepcopy(self.get_job_result(start_job_dict))
 
         return finished_job_dict
+
+    def analyse_protected_lands(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.protected_lands_endpoint, job_label, payload)
+
+    def analyse_soil(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.soil_endpoint, job_label, payload)
+
+    def analyse_terrain(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.terrain_endpoint, job_label, payload)
+
+    def analyse_climate(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.climate_endpoint, job_label, payload)
+
+    def analyse_point_sources(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.point_source_endpoint, job_label, payload)
+
+    def analyse_animals(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.animal_endpoint, job_label, payload)
+
+    def analyse_catchment_water_quality(
+        self, job_label, payload
+    ) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.catchment_water_quality_endpoint, job_label, payload
+        )
+
+    def analyse_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2019"), job_label, payload
+        )
+
+    def analyse_2019_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2019"), job_label, payload
+        )
+
+    def analyse_2016_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2016"), job_label, payload
+        )
+
+    def analyse_2011_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2011"), job_label, payload
+        )
+
+    def analyse_2006_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2006"), job_label, payload
+        )
+
+    def analyse_2001_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2001"), job_label, payload
+        )
+
+    def analyse_2011_2011_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2011_2011"), job_label, payload
+        )
+
+    def analyse_forcast(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.forcast_endpoint.format("centers"), job_label, payload
+        )
+
+    def analyse_forcast_centers(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.forcast_endpoint.format("centers"), job_label, payload
+        )
+
+    def analyse_forcast_corridors(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.forcast_endpoint.format("corridors"), job_label, payload
+        )
+
+    def analyse_streams(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.streams_endpoint.format("nhdhr"), job_label, payload
+        )
+
+    def analyse_streams_nhdhr(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.streams_endpoint.format("nhdhr"), job_label, payload
+        )
+
+    def analyse_streams_nhdmr(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.streams_endpoint.format("nhd"), job_label, payload)
+
+    def analyse_streams_drb(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.streams_endpoint.format("drb"), job_label, payload)
 
     def get_dump_filename(self, request_endpoint: str, job_label: str) -> str:
         """Returns the expected generated file name for a json returned by ModelMyWatershed
@@ -706,15 +791,13 @@ class ModelMyWatershedAPI:
             # this is not expected, but we'll support it
             if isinstance(aoi, str) and "__" in aoi:
                 job_label = aoi
-                params = {"wkaoi": aoi}
-                payload = None
+                payload = {"wkaoi": aoi}
             # if it doesn't have underscores, we're assuiming it's a HUC
             elif isinstance(aoi, str) and (
                 len(aoi) == 8 or len(aoi) == 10 or len(aoi) == 12
             ):
                 job_label = aoi
-                params = {"huc": aoi}
-                payload = None
+                payload = {"huc": aoi}
             # if it's not a string, hopefully it's a valid geojson
             # TODO(SRGDamia1): validate geojson!  Must be a valid single-ringed Multipolygon GeoJSON representation of the shape to analyze
             # NOTE:  In order to validate geojson, we'd need to add some sort of geo dependency.  I'm not sure if we want to add that.
@@ -727,14 +810,12 @@ class ModelMyWatershedAPI:
                     job_label = aoi["properties"]["name"]
                 else:
                     job_label = "shape_{}".format(run_number)
-                params = None
                 payload = aoi
 
             try:
                 req_dump = self.run_mmw_job(
                     request_endpoint=analysis_endpoint,
                     job_label=job_label,
-                    params=params,
                     payload=payload,
                 )
                 res_frame = pd.DataFrame(
@@ -815,7 +896,6 @@ class ModelMyWatershedAPI:
             mapshed_job_dict = self.run_mmw_job(
                 request_endpoint=self.gwlfe_prepare_endpoint,
                 job_label=job_label,
-                params=None,
                 payload=mapshed_payload,
             )
             if "result_response" in mapshed_job_dict.keys():
@@ -842,7 +922,6 @@ class ModelMyWatershedAPI:
                 gwlfe_job_dict = self.run_mmw_job(
                     request_endpoint=self.gwlfe_run_endpoint,
                     job_label=job_label,
-                    params=None,
                     payload=gwlfe_payload,
                 )
                 if "result_response" in gwlfe_job_dict.keys():

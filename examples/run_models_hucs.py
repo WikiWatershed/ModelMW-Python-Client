@@ -169,7 +169,6 @@ for idx, huc_aoi in enumerate(huc_aois):
                     mapshed_job_dict = mmw_run.run_mmw_job(
                         request_endpoint=mmw_run.gwlfe_prepare_endpoint,
                         job_label=mapshed_job_label,
-                        params=None,
                         payload=mapshed_payload,
                     )
                     if "result_response" in mapshed_job_dict.keys():
@@ -196,13 +195,11 @@ for idx, huc_aoi in enumerate(huc_aois):
                             ),
                             job_label=mapshed_job_label,
                             payload={"huc": huc_aoi},
-                            params=None,
                         )
                         mmw_run.run_mmw_job(
                             request_endpoint=mmw_run.forcast_endpoint.format(lu_mod),
                             job_label=mapshed_job_label,
                             payload={"huc": huc_aoi},
-                            params=None,
                         )
                         land_use_modification_set = mmw_run.dump_land_use_modifications(
                             "{}_{}_drb-2100-land_{}".format(
@@ -224,7 +221,6 @@ for idx, huc_aoi in enumerate(huc_aois):
                     gwlfe_job_dict = mmw_run.run_mmw_job(
                         request_endpoint=mmw_run.gwlfe_run_endpoint,
                         job_label=gwlfe_job_label,
-                        params=None,
                         payload=gwlfe_payload,
                     )
                     if "result_response" in gwlfe_job_dict.keys():
@@ -310,7 +306,6 @@ for idx, huc_aoi in enumerate(huc_aois):
             tr55_job_dict = mmw_run.run_mmw_job(
                 request_endpoint=mmw_run.tr55_endpoint,
                 job_label=tr55_job_label,
-                params=None,
                 payload=tr55_payload,
             )
             if "result_response" in tr55_job_dict.keys():
