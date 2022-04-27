@@ -18,8 +18,9 @@ import json
 from modelmw_client import *
 
 import logging
+
 logging.basicConfig()
-logging.getLogger('modelmw_client').setLevel(logging.INFO)
+logging.getLogger("modelmw_client").setLevel(logging.INFO)
 
 
 #%%  Read location data
@@ -97,19 +98,15 @@ for idx, huc_aoi in enumerate(huc_aois):
             land_use_layer,
         )
 
-        if mmw_run.land_use_layers[land_use_layer] == "2019_2019":
+        if land_use_layer == "2019_2019":
             land_use_modifications = ["unmodified", "centers", "corridors"]
         else:
             land_use_modifications = ["unmodified"]  # {"unmodified": "[{}]"}
 
         for lu_mod in land_use_modifications:
 
-            mapshed_job_label = "{}_{}".format(
-                huc_aoi, mmw_run.land_use_layers[land_use_layer]
-            )
-            gwlfe_job_label = "{}_{}_{}".format(
-                huc_aoi, mmw_run.land_use_layers[land_use_layer], lu_mod
-            )
+            mapshed_job_label = "{}_{}".format(huc_aoi, land_use_layer)
+            gwlfe_job_label = "{}_{}_{}".format(huc_aoi, land_use_layer, lu_mod)
 
             gwlfe_result = None
             _, gwlfe_result = mmw_run.read_dumped_result(
@@ -158,10 +155,15 @@ for idx, huc_aoi in enumerate(huc_aois):
 
                 if mapshed_job_still_valid is False:
 
-                    ## run MapShed once for each land use layer
+                    # run MapShed once for each land use layer
+                    # NOTE:  when using the layer overrides, we need the full layer
+                    # title, ie, "nlcd-2019-30m-epsg5070-512-byte".  We can get this
+                    # from the land use dictionary in the modelmw_client.
                     mapshed_payload = {
                         "huc": huc_aoi,
-                        "layer_overrides": {"__LAND__": land_use_layer},
+                        "layer_overrides": {
+                            "__LAND__": mmw_run.land_use_layers[land_use_layer]
+                        },
                     }
 
                     mapshed_job_dict = mmw_run.run_mmw_job(
@@ -186,9 +188,29 @@ for idx, huc_aoi in enumerate(huc_aois):
                     if lu_mod == "unmodified":
                         land_use_modification_set = "[{}]"
                     else:
-                        land_use_modification_set = mmw_run.dump_land_use_modifications(
-                            huc_aoi, lu_mod, base_nlcd_for_modifications
+                        # run analysis on the centers and corridors
+                        # NOTE:  We're just letting these be saved to json
+                        mmw_run.run_mmw_job(
+                            request_endpoint=mmw_run.land_endpoint.format(
+                                land_use_layer
+                            ),
+                            job_label=mapshed_job_label,
+                            payload={"huc": huc_aoi},
+                            params=None,
                         )
+                        mmw_run.run_mmw_job(
+                            request_endpoint=mmw_run.forcast_endpoint.format(lu_mod),
+                            job_label=mapshed_job_label,
+                            payload={"huc": huc_aoi},
+                            params=None,
+                        )
+                        land_use_modification_set = mmw_run.dump_land_use_modifications(
+                            "{}_{}_drb-2100-land_{}".format(
+                                huc_aoi, land_use_layer, lu_mod
+                            ),
+                            "{}_{}_gwlf-e_prepare".format(huc_aoi, land_use_layer),
+                        )
+                        print(land_use_modification_set)
 
                     gwlfe_payload = {
                         # NOTE:  The value of the inputmod_hash doesn't really matter here
@@ -246,6 +268,9 @@ for idx, huc_aoi in enumerate(huc_aois):
             # Internally, the ModelMW site uses the inputmod_hash in scenerios to
             # determine whether it can use cached results or if it needs to
             # re-run the job
+            # NOTE:  when using the layer overrides, we need the full layer
+            # title, ie, "nlcd-2019-30m-epsg5070-512-byte".  We can get this
+            # from the land use dictionary in the modelmw_client.
             "inputs": [
                 {
                     "name": "precipitation",
@@ -265,15 +290,13 @@ for idx, huc_aoi in enumerate(huc_aois):
             "modification_censuses": None,
             "inputmod_hash": "c41c79294c722aac7febf21a5bfc95e7d751713988987e9331980363e24189ce",
             "modification_hash": "d751713988987e9331980363e24189ce",
-            "layer_overrides": {"__LAND__": land_use_layer},
+            "layer_overrides": {"__LAND__": mmw_run.land_use_layers[land_use_layer]},
             "huc": huc_aoi,
         }
 
         tr55_input = json.dumps(pre_tr55_input).replace("'", '"')
         tr55_payload = {"model_input": tr55_input}
-        tr55_job_label = "{}_{}".format(
-            huc_aoi, mmw_run.land_use_layers[land_use_layer]
-        )
+        tr55_job_label = "{}_{}".format(huc_aoi, land_use_layer)
 
         _, tr55_result = mmw_run.read_dumped_result(
             mmw_run.tr55_endpoint,
@@ -315,7 +338,7 @@ for idx, huc_aoi in enumerate(huc_aois):
                 step_l_quality,
             ]:
                 frame["huc_aoi"] = huc_aoi
-                frame["Land_Use_Source"] = mmw_run.land_use_layers[land_use_layer]
+                frame["Land_Use_Source"] = land_use_layer
             tr55_censuses.append(tr55_census)
             tr55_runoff_distributions.append(tr55_runoff_distribution)
             tr55_runoff_totals.append(tr55_runoff_total)

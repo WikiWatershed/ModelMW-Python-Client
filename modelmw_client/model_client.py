@@ -55,7 +55,6 @@ class ModelMyWatershedAPI:
     old_modeling_endpoint: str = "mmw/modeling/"
 
     # simple analysis endpoings
-    streams_endpoint: str = analyze_endpoint + "streams/"
     protected_lands_endpoint: str = analyze_endpoint + "protected-lands/"
     soil_endpoint: str = analyze_endpoint + "soil/"
     terrain_endpoint: str = analyze_endpoint + "terrain/"
@@ -68,6 +67,7 @@ class ModelMyWatershedAPI:
     # more detailed analysis endpoints
     land_endpoint: str = analyze_endpoint + "land/{}/"
     forcast_endpoint: str = analyze_endpoint + "drb-2100-land/{}/"
+    streams_endpoint: str = analyze_endpoint + "streams/{}/"
 
     # GWLF-E endpoints
     gwlfe_prepare_endpoint: str = modeling_endpoint + "gwlf-e/prepare/"
@@ -86,13 +86,23 @@ class ModelMyWatershedAPI:
     # from the Drexel-provided API, and are not available as a geoprocessing layer
     # from https://github.com/WikiWatershed/model-my-watershed/blob/develop/src/mmw/js/src/modeling/utils.js
     land_use_layers: Dict[str, str] = {
-        "nlcd-2019-30m-epsg5070-512-byte": "2019_2019",
-        "nlcd-2016-30m-epsg5070-512-byte": "2019_2016",
-        "nlcd-2011-30m-epsg5070-512-byte": "2019_2011",
-        "nlcd-2006-30m-epsg5070-512-byte": "2019_2006",
-        "nlcd-2001-30m-epsg5070-512-byte": "2019_2001",
-        "nlcd-2011-30m-epsg5070-512-int8": "2011_2011",
+        "2019_2019": "nlcd-2019-30m-epsg5070-512-byte",
+        "2019_2016": "nlcd-2016-30m-epsg5070-512-byte",
+        "2019_2011": "nlcd-2011-30m-epsg5070-512-byte",
+        "2019_2006": "nlcd-2006-30m-epsg5070-512-byte",
+        "2019_2001": "nlcd-2001-30m-epsg5070-512-byte",
+        "2011_2011": "nlcd-2011-30m-epsg5070-512-int8",
     }
+
+    drb_2011_keys = [
+        "centers",
+        "centers_np",
+        "centers_osi",
+        "corridors",
+        "corridors_np",
+        "corridors_osi",
+    ]
+    streams_datasources = ["nhd", "nhdhr", "drb"]
 
     # conversion dictionaries
     # dictionary for converting NLCD types to those used by MapShed
@@ -356,7 +366,7 @@ class ModelMyWatershedAPI:
             # the api endpoint expects json, expected to be dumped from a dictionary
             payload_compressed = json.dumps(payload, separators=(",", ":"))
         elif self.old_modeling_endpoint in request_endpoint:
-            # the modeling endpoint expects form data, that should be pre-prepared by the user
+            # the older modeling endpoint expected form data, that should be pre-prepared by the user
             payload_compressed = payload
 
         attempts = 0
@@ -874,9 +884,8 @@ class ModelMyWatershedAPI:
 
     def dump_land_use_modifications(
         self,
-        landuse_job_label: str,
-        modified_land_use_source: str,
-        base_land_use_source: str,
+        modified_analysis_result_file: str,
+        unmodified_mapshed_result_file: str,
     ) -> Union[str, None]:
         """Converts the Shippensburg generated predictions of land uses in 2100 within
         the Delaware River Watershed into a set of modifications that can be applied
@@ -893,39 +902,26 @@ class ModelMyWatershedAPI:
         type or geology of the changed area is lost.
 
         Args:
-            landuse_job_label (str): The custom "label" used for both the land-use
-                analysis job and the initial mapshed preparation run for GWLF-E.
-            modified_land_use_source (str): The analysis data to be used as the source
-                of land use modification.  Should be either 'centers' or 'corridors'.
-            base_land_use_source (str): The base land use to modify.  Should be a
-                value from land_use_layers.
+            modified_analysis_result_file (str): The file name of a json file with the
+               analysis output to be used for modifications.  This is expected to be a
+               dump of a request to the future predictions endpoint.
+            unmodified_mapshed_result_file (str): The file name of a MapShed (GWLF-E
+                prepare) output on the **unmodified** layer
 
         Returns:
             Dict: a dictionary of land use modifications
         """
-        baselayer_ms_job_label = "{}_nlcd_{}".format(
-            landuse_job_label, base_land_use_source
-        )
-
-        if (
-            modified_land_use_source == "centers"
-            or modified_land_use_source == "corridors"
-        ):
-            lu_endpoint = self.forcast_endpoint.format(modified_land_use_source)
-        else:
-            lu_endpoint = self.land_endpoint.format(modified_land_use_source)
 
         _, lu_modifications = self.read_dumped_result(
-            lu_endpoint,
-            landuse_job_label,
-            self.json_dump_path
-            + "{}_{}_landuse.json".format(landuse_job_label, modified_land_use_source),
+            "",
+            "",
+            self.json_dump_path + modified_analysis_result_file,
             "survey",
         )
         _, mapshed_base = self.read_dumped_result(
-            self.gwlfe_prepare_endpoint,
-            baselayer_ms_job_label,
-            self.json_dump_path + "{}_mapshed.json".format(baselayer_ms_job_label),
+            "",
+            "",
+            self.json_dump_path + unmodified_mapshed_result_file,
             "Area",
         )
 
@@ -993,12 +989,13 @@ class ModelMyWatershedAPI:
             .set_index("area_id")
             .to_dict(orient="dict")["factored_area"]
         )
-        mod_dict_preset = {
-            "entry_landcover_preset": "drb_2100_land_{}".format(
-                modified_land_use_source
-            )
-        }
-        mod_dict_2 = dict(mod_dict_preset, **mod_dict)
-        mod_dict_dump = "[{}]".format(json.dumps(mod_dict_2).replace(" ", ""))
+        # mod_dict_preset = {
+        #     "entry_landcover_preset": "drb_2100_land_{}".format(
+        #         modified_land_use_source
+        #     )
+        # }
+        # mod_dict_2 = dict(mod_dict_preset, **mod_dict)
+        # mod_dict_dump = "[{}]".format(json.dumps(mod_dict_2).replace(" ", ""))
+        mod_dict_dump = "[{}]".format(json.dumps(mod_dict).replace(" ", ""))
 
         return mod_dict_dump

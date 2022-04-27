@@ -18,8 +18,9 @@ import json
 from modelmw_client import *
 
 import logging
+
 logging.basicConfig()
-logging.getLogger('modelmw_client').setLevel(logging.INFO)
+logging.getLogger("modelmw_client").setLevel(logging.INFO)
 
 
 #%%  Read location data
@@ -63,18 +64,16 @@ for idx, huc_aoi in enumerate(huc_aois):
             land_use_layer,
         )
 
-        if mmw_run.land_use_layers[land_use_layer] == "2019_2019":
+        if land_use_layer == "2019_2019":
             land_use_modifications = ["unmodified", "centers", "corridors"]
         else:
             land_use_modifications = ["unmodified"]  # {"unmodified": "[{}]"}
 
         for lu_mod in land_use_modifications:
 
-            mapshed_job_label = "{}_{}_subbasin".format(
-                huc_aoi, mmw_run.land_use_layers[land_use_layer]
-            )
+            mapshed_job_label = "{}_{}_subbasin".format(huc_aoi, land_use_layer)
             gwlfe_job_label = "{}_{}_{}_subbasin".format(
-                huc_aoi, mmw_run.land_use_layers[land_use_layer], lu_mod
+                huc_aoi, land_use_layer, lu_mod
             )
 
             gwlfe_result = None
@@ -124,10 +123,15 @@ for idx, huc_aoi in enumerate(huc_aois):
 
                 if mapshed_job_still_valid is False:
 
-                    ## run MapShed once for each land use layer
+                    # run MapShed once for each land use layer
+                    # NOTE:  when using the layer overrides, we need the full layer
+                    # title, ie, "nlcd-2019-30m-epsg5070-512-byte".  We can get this
+                    # from the land use dictionary in the modelmw_client.
                     mapshed_payload = {
                         "huc": huc_aoi,
-                        "layer_overrides": {"__LAND__": land_use_layer},
+                        "layer_overrides": {
+                            "__LAND__": mmw_run.land_use_layers[land_use_layer]
+                        },
                     }
 
                     mapshed_job_dict = mmw_run.run_mmw_job(
