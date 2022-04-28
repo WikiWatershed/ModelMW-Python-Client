@@ -12,7 +12,7 @@ from typing_extensions import NotRequired
 from collections import OrderedDict
 
 import requests
-from requests import Session
+from requests import Request, Response, Session
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -30,7 +30,9 @@ class ModelMyWatershedJob(TypedDict):
     request_host: str
     request_endpoint: str
     payload: NotRequired[Union[str, Dict]]
+    start_job_status: str
     start_job_response: NotRequired[Any]
+    job_result_status: str
     result_response: NotRequired[Any]
     error_response: NotRequired[Dict]
 
@@ -53,7 +55,7 @@ class ModelMyWatershedAPI:
     modeling_endpoint: str = api_endpoint + "modeling/"
     old_modeling_endpoint: str = "mmw/modeling/"
 
-    # simple analysis endpoings
+    # simple analysis endpoints
     protected_lands_endpoint: str = analyze_endpoint + "protected-lands/"
     soil_endpoint: str = analyze_endpoint + "soil/"
     terrain_endpoint: str = analyze_endpoint + "terrain/"
@@ -81,6 +83,9 @@ class ModelMyWatershedAPI:
     # TR-55 (Site Storm Model) endpoint
     tr55_endpoint: str = old_modeling_endpoint + "tr55/"
 
+    # project endpoint
+    project_endpoint: str = old_modeling_endpoint + "projects/"
+
     # NOTE:  These are NLCD layers ONLY!  The Shippensburg 2100 predictions are called
     # from the Drexel-provided API, and are not available as a geoprocessing layer
     # from https://github.com/WikiWatershed/model-my-watershed/blob/develop/src/mmw/js/src/modeling/utils.js
@@ -102,6 +107,7 @@ class ModelMyWatershedAPI:
         "corridors_osi",
     ]
     streams_datasources = ["nhd", "nhdhr", "drb"]
+    weather_layers = ["NASA_NLDAS_2000_2019", "RCP45_2080_2099", "RCP85_2080_2099"]
 
     # conversion dictionaries
     # dictionary for converting NLCD types to those used by MapShed
@@ -168,17 +174,36 @@ class ModelMyWatershedAPI:
         if self.save_path is not None:
             self.json_dump_path = self.save_path + "mmw_results\\json_results\\"
 
-        # create a request session
+        # TODO(SRGDamia1): Find out the max response time from Terence
+        DEFAULT_TIMEOUT = 5  # seconds
+
+        # create a TimeoutHTTPAdapter to enforce a default timeout on the session
+        # from https://findwork.dev/blog/advanced-usage-python-requests-timeouts-retries-hooks/
+        class TimeoutHTTPAdapter(HTTPAdapter):
+            def __init__(self, *args, **kwargs):
+                self.timeout = DEFAULT_TIMEOUT
+                if "timeout" in kwargs:
+                    self.timeout = kwargs["timeout"]
+                    del kwargs["timeout"]
+                super().__init__(*args, **kwargs)
+
+            def send(self, request, **kwargs):
+                timeout = kwargs.get("timeout")
+                if timeout is None:
+                    kwargs["timeout"] = self.timeout
+                return super().send(request, **kwargs)
 
         retry_strategy = Retry(
-            total=50,
+            total=5,
             backoff_factor=1,
             status_forcelist=[413, 429, 500, 502, 503, 504],
             method_whitelist=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE"],
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
+        adapter = TimeoutHTTPAdapter(max_retries=retry_strategy)
+        # create a request session
         self.mmw_session = Session()
         self.mmw_session.verify = True
+        # mount the session for all requests, attaching the timeout/retry adapter
         self.mmw_session.mount("https://", adapter)
         self.mmw_session.mount("http://", adapter)
 
@@ -198,7 +223,7 @@ class ModelMyWatershedAPI:
             }
         )
 
-    def print_headers(self, headers: Dict) -> str:
+    def _print_headers(self, headers: Dict) -> str:
         """Helper function for tracing errors in requests - prints out the header dictionary
 
         Args:
@@ -212,7 +237,7 @@ class ModelMyWatershedAPI:
             out_str += "\t{}: {}\n".format(header, headers[header])
         return out_str
 
-    def print_req(
+    def _print_req(
         self,
         the_request: requests.Response,
         logging_level: int = logging.DEBUG,
@@ -229,16 +254,22 @@ class ModelMyWatershedAPI:
             print_format.format(
                 the_request.request.method,
                 the_request.request.url,
-                self.print_headers(the_request.request.headers),
-                the_request.request.body,
+                self._print_headers(the_request.request.headers),
+                the_request.request.body
+                if the_request.request.body is None
+                or (
+                    the_request.request.body is not None
+                    and len(the_request.request.body) < 1000
+                )
+                else "{} ...".format(the_request.request.body[0:250]),
                 the_request.status_code,
                 the_request.url,
-                self.print_headers(the_request.headers),
+                self._print_headers(the_request.headers),
                 the_request.cookies,
             ),
         )
 
-    def print_req_trace(
+    def _print_req_trace(
         self,
         the_request: requests.Response,
         logging_level: int = logging.DEBUG,
@@ -250,13 +281,13 @@ class ModelMyWatershedAPI:
             logging_level (logging._Level): The logging level to use for the request
         """
         if the_request.history:
-            self.api_logger.trace("\nRequest was redirected")
+            self.api_logger.debug("\nRequest was redirected")
             for resp in the_request.history:
-                self.print_req(resp, logging.DEBUG)
-            self.api_logger.trace("\n\nFinal destination:")
-            self.print_req(the_request, logging_level)
+                self._print_req(resp, logging.DEBUG)
+            self.api_logger.debug("\n\nFinal destination:")
+            self._print_req(the_request, logging_level)
         else:
-            self.print_req(the_request, logging_level)
+            self._print_req(the_request, logging_level)
 
     def login(self, mmw_user: str, mmw_pass: str) -> bool:
         """Log in to the ModelMyWatershed API
@@ -294,10 +325,10 @@ class ModelMyWatershedAPI:
             self.api_logger.warn("Failed to log in: {}".format(ex))
             return False
 
-        # self.api_logger.trace("\nSession cookies: {}".format(self.mmw_session.cookies))
+        # self.api_logger.debug("\nSession cookies: {}".format(self.mmw_session.cookies))
         return True
 
-    def set_request_headers(self, request_endpoint: str) -> None:
+    def _set_request_headers(self, request_endpoint: str) -> None:
         """Adds the right referer and datatype headers to a request
 
         Args:
@@ -307,10 +338,16 @@ class ModelMyWatershedAPI:
         if self.api_endpoint in request_endpoint:
             headers = {
                 "Content-Type": "application/json",
-                "X-Requested-With": "XMLHttpRequest",
                 "Referer": "https://staging.modelmywatershed.org/analyze",
+                "X-Requested-With": "XMLHttpRequest",
             }
-        elif self.modeling_endpoint or self.old_modeling_endpoint in request_endpoint:
+        elif self.project_endpoint in request_endpoint:
+            headers = {
+                "Content-Type": "application/json",
+                "Referer": "https://staging.modelmywatershed.org/project/",
+                "X-Requested-With": "XMLHttpRequest",
+            }
+        elif self.old_modeling_endpoint in request_endpoint:
             headers = {
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "Referer": "https://staging.modelmywatershed.org/project/",
@@ -319,11 +356,11 @@ class ModelMyWatershedAPI:
 
         self.mmw_session.headers.update(headers)
 
-    def pprint_endpoint(self, request_endpoint: str) -> None:
-        """Prints out the request endpoing in a format usable for a Windows endpoint
+    def _pprint_endpoint(self, request_endpoint: str) -> None:
+        """Prints out the request endpoint in a format usable for a Windows endpoint
 
         Args:
-            request_endpoint (string): the request endpoing
+            request_endpoint (string): the request endpoint
         """
         return (
             request_endpoint.replace(self.analyze_endpoint, "")
@@ -332,7 +369,134 @@ class ModelMyWatershedAPI:
             .strip(" _")
         )
 
-    # Analysis helper functions
+    def _make_mmw_request(
+        self, req: Request, required_json_fields: Union[List[str], None] = None
+    ) -> Dict:
+        """Make a request to ModelMW with retries including handeling for throttling.
+
+        Args:
+            req (Request): A requests "Request" object
+            required_json_fields (List[str]): A list of fields, at least one of which
+                must be present in the response json.  If none of these fields are
+                present, the request will be retried.
+
+        Returns:
+            Dict: The response json and details about the response
+        """
+
+        # "prepare" the request, in the session
+        prepped = self.mmw_session.prepare_request(req)
+        throttle_time = 30.0
+
+        attempts = 0
+        while attempts < 5:
+            # use the session to send the request
+            # NOTE:  The http method is already part of the prepared request, so here we just "send"
+            req_resp = self.mmw_session.send(prepped)
+            self._print_req_trace(req_resp, logging.DEBUG)
+
+            # make sure we got valid json - all responses from ModelMW - except for DELETE's - should be json, even errors
+            req_resp_json = None
+            try:
+                if prepped.method != "DELETE":
+                    req_resp_json = req_resp.json(object_pairs_hook=OrderedDict)
+
+            except (requests.exceptions.JSONDecodeError, json.JSONDecodeError):
+                self.api_logger.warn(
+                    "\t***Proper JSON not returned for ModelMW request!***"
+                )
+                self.api_logger.debug(
+                    "\t***Got {} with text {}!***".format(req_resp, req_resp.text)
+                )
+
+            # if we got a positive response code, we have proper json, and it has the required fields, return it
+            if (
+                req_resp.status_code in [200, 201]
+                and (
+                    (
+                        req_resp_json is not None
+                        and required_json_fields is not None
+                        and required_json_fields != []
+                        and (
+                            (type(req_resp_json) in [dict, OrderedDict])
+                            and any(
+                                (
+                                    (req_key in req_resp_json.keys())
+                                    and (req_resp_json[req_key] is not None)
+                                    for req_key in required_json_fields
+                                )
+                            )
+                        )
+                    )
+                    or (
+                        req_resp_json is not None
+                        and (required_json_fields is None or required_json_fields == [])
+                    )
+                )
+                or (req_resp.status_code in [204, 404] and prepped.method == "DELETE")
+            ):
+                return {
+                    "succeeded": True,
+                    "json_response": copy.deepcopy(req_resp_json),
+                    "error_response": None,
+                }
+
+            # If we didn't get a positive response code, or we didn't get proper json,
+            # or the expected fields aren't in it
+            self.api_logger.warn(
+                "\tModelMW {} request to {} FAILED on attempt {}".format(
+                    req_resp.request.method, req_resp.request.url, attempts
+                )
+            )
+
+            # status codes not to retry
+            if req_resp.status_code in [404]:
+                self.api_logger.warn(
+                    "\tGot status code {}; will not retry".format(req_resp.status_code)
+                )
+                attempts = 5
+                break
+
+            # try to read the error details to see if we've been throttled
+            req_resp_details = ""
+            if (
+                req_resp_json is not None
+                and (
+                    type(req_resp_details) is dict
+                    or type(req_resp_details) is OrderedDict
+                )
+                and "detail" in req_resp_details.keys()
+            ):
+                req_resp_details = req_resp_details["detail"]
+            if "throttled" in req_resp_details:
+                search_pat = "Expected available in (?P<throttle_time>[\d\.]+) seconds."
+                throttle_match = re.search(search_pat, req_resp_details)
+                if throttle_match is not None:
+                    throttle_time = float(throttle_match.group("throttle_time"))
+
+            if throttle_time > 60.0 * 30.0:
+                self.api_logger.warn(
+                    "\twait time of {}s is too long, will not retry".format(
+                        throttle_time
+                    )
+                )
+                attempts = 5
+                break
+
+            elif attempts < 4:
+                self.api_logger.debug("\tretrying in {}s...".format(throttle_time))
+                time.sleep(throttle_time)
+                attempts += 1
+
+        # if we get all the way here, just return whatever we got
+        self.api_logger.error("\t***ERROR IN ModelMW REQUEST***")
+        self._print_req_trace(req_resp, logging.ERROR)
+        return {
+            "succeeded": True,
+            "json_response": None,
+            "error_response": req_resp_json if req_resp_json is not None else req_resp,
+        }
+
     def start_job(
         self,
         request_endpoint: str,
@@ -355,101 +519,35 @@ class ModelMyWatershedAPI:
             "request_host": self.mmw_host,
             "request_endpoint": request_endpoint,
             "payload": payload,
+            "start_job_status": "Not Started",
+            "job_result_status": "Not Started",
         }
 
-        self.set_request_headers(request_endpoint)
+        self._set_request_headers(request_endpoint)
         if self.api_endpoint in request_endpoint:
             # the api endpoint expects json, expected to be dumped from a dictionary
-            payload_compressed = json.dumps(payload, separators=(",", ":"))
+            json_data = payload
+            payload = None
         elif self.old_modeling_endpoint in request_endpoint:
             # the older modeling endpoint expected form data, that should be pre-prepared by the user
-            payload_compressed = payload
+            json_data = None
 
-        attempts = 0
-        while attempts < 5:
-            start_job = self.mmw_session.post(
-                "{}/{}".format(self.mmw_host, request_endpoint),
-                data=payload_compressed,
-            )
-            # self.print_req_trace(start_job,logging.DEBUG)
+        outgoing_request: Request = Request(
+            "POST",
+            "{}/{}".format(self.mmw_host, request_endpoint),
+            data=payload,
+            json=json_data,
+        )
+        start_job_req: Dict = self._make_mmw_request(
+            outgoing_request, ["job", "job_uuid"]
+        )
 
-            throttle_time = 30.0
-            if start_job.status_code != 200:
-                self.api_logger.error(
-                    "\t***ERROR STARTING JOB***\n\t{}".format(start_job.content)
-                )
-                self.print_req_trace(start_job, logging.ERROR)
-                try:
-                    detail = json.loads(start_job.content)
-                    if type(detail) is dict and "detail" in detail.keys():
-                        detail=detail["detail"]
-                    if "throttled" in detail:
-                        search_pat = (
-                            "Expected available in (?P<throttle_time>[\d\.]+) seconds."
-                        )
-                        throttle_match = re.search(search_pat, detail)
-                        if throttle_match is not None:
-                            throttle_time = float(throttle_match.group("throttle_time"))
-                        else:
-                            return job_dict
-                    else:
-                        return job_dict
-                except Exception as ex:
-                    self.api_logger.warn("\tUnexpected exception:", ex)
-                    return job_dict
-
-            resp_json = None
-            try:
-                resp_json = start_job.json(object_pairs_hook=OrderedDict)
-            except Exception as ex:
-                self.api_logger.error(
-                    "\t***Proper JSON not returned for start job request!***"
-                )
-                self.api_logger.debug(
-                    "\t***Got {} with text {}!***".format(start_job, start_job.text)
-                )
-
-            if (
-                resp_json is not None
-                and "job" in resp_json.keys()
-                and resp_json["job"] is not None
-            ):
-                self.api_logger.info(
-                    "\t{} job started for {}".format(
-                        self.pprint_endpoint(request_endpoint), job_label
-                    )
-                )
-                attempts = 5
-
-            # self.api_logger.trace("Start job result: {}".format(start_job.text))
-            elif resp_json is not None and "job" not in start_job.json().keys():
-                self.api_logger.error(
-                    "\t***ERROR STARTING JOB***\n\t{}".format(start_job.json())
-                )
-                return job_dict
-
-            elif throttle_time > 60.0 * 30.0:
-                self.api_logger.warn(
-                    "\twait time of {}s is too long, will not retry".format(
-                        throttle_time
-                    )
-                )
-                attempts = 5
-
-            elif throttle_time < 60.0 * 30.0 and attempts < 4:
-                self.api_logger.debug("\tretrying in {}s...".format(throttle_time))
-                time.sleep(throttle_time)
-                attempts += 1
-
-            elif attempts < 4:
-                self.api_logger.debug("\tretrying in 30s...")
-                time.sleep(30)
-                attempts += 1
-
-            else:
-                self.api_logger.warn("\t{} job FAILED".format(request_endpoint))
-
-        job_dict["start_job_response"] = resp_json
+        if start_job_req["succeeded"] == True:
+            job_dict["start_job_status"] = "succeeded"
+            job_dict["start_job_response"] = start_job_req["json_response"]
+        else:
+            job_dict["start_job_status"] = "failed"
+            job_dict["start_job_response"] = start_job_req["error_response"]
         return job_dict
 
     def get_job_result(
@@ -463,17 +561,36 @@ class ModelMyWatershedAPI:
         Returns:
             ModelMyWatershedJob: A copy of the input dictionary with the job output appended.
         """
-        if (
-            "start_job_response" not in start_job_dict.keys()
-            or "job" not in start_job_dict["start_job_response"].keys()
-        ):
+
+        if start_job_dict["start_job_status"] != "succeeded":
+            self.api_logger.warn(
+                "Job was not successfully started, cannot get results."
+            )
             return start_job_dict
 
-        job_id = start_job_dict["start_job_response"]["job"]
-        is_finished = False
-        is_error = False
+        job_id = None
+        if (
+            "job_uuid" in start_job_dict["start_job_response"].keys()
+            and start_job_dict["start_job_response"]["job_uuid"] is not None
+        ):
+            job_id = start_job_dict["start_job_response"]["job_uuid"]
+        if (
+            "job" in start_job_dict["start_job_response"].keys()
+            and start_job_dict["start_job_response"]["job"] is not None
+        ):
+            job_id = start_job_dict["start_job_response"]["job"]
 
-        self.set_request_headers(start_job_dict["request_endpoint"])
+        if job_id is None:
+            self.api_logger.warn(
+                "Not enough information about start of job to retreive results."
+            )
+            return start_job_dict
+
+        self.api_logger.debug("Job ID to retreive: {}".format(job_id))
+
+        finished_job_dict = copy.deepcopy(start_job_dict)
+
+        self._set_request_headers(start_job_dict["request_endpoint"])
         if self.api_endpoint in start_job_dict["request_endpoint"]:
             job_endpoint = "{}/{}jobs/{}/".format(
                 self.mmw_host, self.api_endpoint, job_id
@@ -483,59 +600,51 @@ class ModelMyWatershedAPI:
                 self.mmw_host, self.old_modeling_endpoint, job_id
             )
 
-        finished_job_dict = copy.deepcopy(start_job_dict)
-        while is_finished == False and is_error == False:
-            job_results_req = self.mmw_session.get(job_endpoint)
-            if job_results_req.status_code != 200:
-                self.api_logger.error(
-                    "\t***ERROR GETTING JOB RESULT***\n\t{}".format(
-                        job_results_req.content
-                    )
-                )
-                self.print_req_trace(job_results_req, logging.ERROR)
+        job_results_req = Request("GET", job_endpoint)
+        job_results_json = {}
+
+        is_finished = False
+        while is_finished == False:
+            job_results_resp = self._make_mmw_request(job_results_req, ["status"])
+            job_results_json = job_results_resp["json_response"]
+
+            if job_results_resp["succeeded"] == False:
+                finished_job_dict["error_response"] = job_results_resp["error_response"]
+                finished_job_dict["job_result_status"] = "failed"
                 return finished_job_dict
-            try:
-                job_results_req.json()
-            except requests.exceptions.JSONDecodeError:
-                is_error = True
-                self.api_logger.warn(
-                    "\t***Proper JSON not returned to job result request!***"
-                )
-                self.api_logger.debug(
-                    "\t***Got {} with text {}!***".format(
-                        job_results_req,
-                        job_results_req.text,
-                    )
-                )
-                continue
-            if (
-                "error" in job_results_req.json().keys()
-                and job_results_req.json()["error"] != ""
+
+            elif (
+                "error" in job_results_resp["json_response"].keys()
+                and job_results_resp["json_response"]["error"] != ""
             ):
                 self.api_logger.error(
                     "\t***ERROR GETTING JOB RESULTS***\n\t{}".format(
-                        job_results_req.json()["error"]
+                        job_results_json["error"]
                     )
                 )
-                finished_job_dict["error_response"] = job_results_req.json(
-                    object_pairs_hook=OrderedDict
-                )
-                is_error = True
-            is_finished = job_results_req.json()["status"] == "complete"
-            time.sleep(0.5)
-        if (
-            "result" in job_results_req.json().keys()
-            and job_results_req.json()["result"] != ""
-        ):
-            finished_job_dict["result_response"] = job_results_req.json(
-                object_pairs_hook=OrderedDict
-            )
+                finished_job_dict["error_response"] = job_results_json
+                finished_job_dict["job_result_status"] = "failed"
+                return finished_job_dict
+
+            is_finished = job_results_json["status"] == "complete"
+            if not is_finished:
+                self.api_logger.debug("ModelMW job has not yet finished.")
+                time.sleep(0.5)
+
+        if "result" in job_results_json.keys() and job_results_json["result"] != "":
+            finished_job_dict["result_response"] = job_results_json
+            finished_job_dict["job_result_status"] = "succeeded"
             self.api_logger.info(
                 "\tGot {} results for {}".format(
-                    self.pprint_endpoint(start_job_dict["request_endpoint"]),
+                    self._pprint_endpoint(start_job_dict["request_endpoint"]),
                     start_job_dict["job_label"],
                 )
             )
+        else:
+            self.api_logger.warn("\t***Did not get a results key in the job results***")
+            finished_job_dict["error_response"] = job_results_json
+            finished_job_dict["job_result_status"] = "failed"
+
         # dump out the whole job for posterity
         if self.save_path is not None:
             with open(
@@ -571,205 +680,196 @@ class ModelMyWatershedAPI:
             job_label=job_label,
         )
 
-        if (
-            "start_job_response" in start_job_dict.keys()
-            and "job" in start_job_dict["start_job_response"].keys()
-            and start_job_dict["start_job_response"]["job"] is not None
-        ):
-            time.sleep(3.5)  # max of 20 requests per minute!
-        else:
+        if start_job_dict["start_job_status"] != "succeeded":
             self.api_logger.warn(
                 "\t{} job FAILED for {}".format(
-                    self.pprint_endpoint(start_job_dict["request_endpoint"]),
+                    self._pprint_endpoint(start_job_dict["request_endpoint"]),
                     job_label,
                 )
             )
+            return copy.deepcopy(start_job_dict)
+
+        time.sleep(3.5)  # max of 20 requests per minute!
 
         finished_job_dict = copy.deepcopy(self.get_job_result(start_job_dict))
 
         return finished_job_dict
 
-    def analyse_protected_lands(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(self.protected_lands_endpoint, job_label, payload)
-
-    def analyse_soil(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(self.soil_endpoint, job_label, payload)
-
-    def analyse_terrain(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(self.terrain_endpoint, job_label, payload)
-
-    def analyse_climate(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(self.climate_endpoint, job_label, payload)
-
-    def analyse_point_sources(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(self.point_source_endpoint, job_label, payload)
-
-    def analyse_animals(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(self.animal_endpoint, job_label, payload)
-
-    def analyse_catchment_water_quality(
-        self, job_label, payload
-    ) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.catchment_water_quality_endpoint, job_label, payload
-        )
-
-    def analyse_land(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.land_endpoint.format("2019_2019"), job_label, payload
-        )
-
-    def analyse_2019_land(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.land_endpoint.format("2019_2019"), job_label, payload
-        )
-
-    def analyse_2016_land(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.land_endpoint.format("2019_2016"), job_label, payload
-        )
-
-    def analyse_2011_land(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.land_endpoint.format("2019_2011"), job_label, payload
-        )
-
-    def analyse_2006_land(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.land_endpoint.format("2019_2006"), job_label, payload
-        )
-
-    def analyse_2001_land(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.land_endpoint.format("2019_2001"), job_label, payload
-        )
-
-    def analyse_2011_2011_land(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.land_endpoint.format("2011_2011"), job_label, payload
-        )
-
-    def analyse_forcast(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.forcast_endpoint.format("centers"), job_label, payload
-        )
-
-    def analyse_forcast_centers(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.forcast_endpoint.format("centers"), job_label, payload
-        )
-
-    def analyse_forcast_corridors(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.forcast_endpoint.format("corridors"), job_label, payload
-        )
-
-    def analyse_streams(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.streams_endpoint.format("nhdhr"), job_label, payload
-        )
-
-    def analyse_streams_nhdhr(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(
-            self.streams_endpoint.format("nhdhr"), job_label, payload
-        )
-
-    def analyse_streams_nhdmr(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(self.streams_endpoint.format("nhd"), job_label, payload)
-
-    def analyse_streams_drb(self, job_label, payload) -> ModelMyWatershedJob:
-        return self.run_mmw_job(self.streams_endpoint.format("drb"), job_label, payload)
-
-    def get_dump_filename(self, request_endpoint: str, job_label: str) -> str:
-        """Returns the expected generated file name for a json returned by ModelMyWatershed
-
-        Args:
-            request_endpoint (str): The endpoint of the request
-            job_label (str): custom job label for the request
-
-        Returns:
-            str: a conventioned file name
-        """
-        return (
-            self.json_dump_path
-            + job_label.replace("/", "_").strip(" _")
-            + "_"
-            + self.pprint_endpoint(request_endpoint)
-            + ".json"
-        )
-
-    def read_dumped_result(
+    def create_project(
         self,
-        request_endpoint: str,
-        job_label: str,
-        alt_filename: str = "",
-        needed_result_key: str = "",
-    ) -> ModelMyWatershedJob:
-        """Reads a json file saved by this library with its file naming convention back into memory.
+        model_package: str,
+        area_of_interest: Dict,
+        name: str = "Untitled Project",
+        mapshed_job_uuid: str = "",
+        layer_overrides: Union[ModemMyWatershedLayerOverride, None] = None,
+    ) -> Dict:
+        """Creates a new project on ModelMyWatershed.  At this time, a project
+        is needed to access some data, including weather projections for a site.
+
+        NOTE:  Projects created with this function **will not be usable** in the
+        ModelMyWatershed web app, but they will appear under the projects for your user.
+        In order not to have many unusable project, I _strongly_ recommend following
+        any create_project actions with a delete_project action later in your script.
+
+        YOU MUST BE LOGGED IN TO USE THIS FEATURE!
 
         Args:
-            request_endpoint (str): The request endpoint that was used
-            job_label (str): the custom job label
-            alt_filename (str, optional): an alternate file name to look for, if the file was saved with a name other than that generated by `get_dump_filename(...)`. Defaults to "".
-            needed_result_key (str, optional): The key in the json for the results, if the json was saved external to this library.. Defaults to "".
+            model_package (str): The model package to use.  Must be either "gwlfe" or "tr-55"
+            area_of_interest (Dict): A geojson dictionary with the shape of the area of interest
+            name (str): A name for the project, can be any text
+            mapshed_job_uuid (str): The UUID for the mapshed (GWLF-E prepare) job tied to this project, if applicable.
+
 
         Returns:
-            ModelMyWatershedJob: A python dictionary made from the saved file.
+            Dict: A dictionary with information about the new project
         """
 
-        saved_result = None
-        req_dump = None
-        dump_filename = self.get_dump_filename(request_endpoint, job_label)
-        if Path(dump_filename).is_file() or (
-            alt_filename != "" and Path(alt_filename).is_file()
-        ):
-            f = (
-                open(dump_filename)
-                if Path(dump_filename).is_file()
-                else open(alt_filename)
+        request_endpoint = self.project_endpoint
+        self._set_request_headers(request_endpoint)
+
+        payload = {
+            "name": name,
+            "area_of_interest": area_of_interest,
+            "model_package": model_package,
+        }
+        if mapshed_job_uuid != "":
+            payload["mapshed_job_uuid"] = mapshed_job_uuid
+        if layer_overrides is not None:
+            payload["layer_overrides"] = layer_overrides
+
+        create_project_req: Request = Request(
+            "POST", "{}/{}".format(self.mmw_host, request_endpoint), json=payload
+        )
+        create_project_resp = self._make_mmw_request(create_project_req, ["id"])
+
+        if create_project_resp["succeeded"] == True:
+            return create_project_resp["json_response"]
+
+        return {}
+
+    def delete_project(
+        self,
+        project_id: Union[str, int],
+    ) -> None:
+        """Deletes a ModelMW project.  If you're using the API to get information based
+        on API-created skeleton projects, you probably want to be able to delete the
+        project so as not to clutter up your user data with zillions of project
+        YOU MUST BE LOGGED IN TO USE THIS FEATURE!
+
+        Args:
+                project_id (Union[str,int]): The project id.
+
+
+        Returns:
+            None
+        """
+
+        request_endpoint = self.project_endpoint + "{}".format(project_id)
+        self._set_request_headers(request_endpoint)
+
+        delete_project_req: Request = Request(
+            "DELETE", "{}/{}".format(self.mmw_host, request_endpoint)
+        )
+        self._make_mmw_request(delete_project_req)
+
+    def get_project_weather(
+        self, project_id: Union[str, int], weather_layer: str
+    ) -> Dict:
+        """Get weather data for project given a category, if available.
+        Current categories are NASA_NLDAS_2000_2019, RCP45_2080_2099 and
+        RCP85_2080_2099, and only support shapes within the DRB. Given a project
+        within the DRB, we find the N=2 nearest weather stations and
+        average their values.
+
+            Args:
+                project_id (Union[str,int]): The project id.
+                weather_layer (str) The weather layer to use, must be one of
+                    "NASA_NLDAS_2000_2019", "RCP45_2080_2099" or "RCP85_2080_2099"
+
+
+            Returns:
+                Dict: Weather output, ready to be fed into a project GWLF-E modification run
+        """
+
+        request_endpoint = self.project_endpoint + "{}/weather/{}".format(
+            project_id, weather_layer
+        )
+        self._set_request_headers(request_endpoint)
+
+        weather_data_req = Request(
+            "GET", "{}/{}".format(self.mmw_host, request_endpoint)
+        )
+        weather_data_resp = self._make_mmw_request(
+            weather_data_req, ["output"]  # "WxYrBeg"
+        )
+
+        if weather_data_resp["succeeded"] == True:
+            # # dump out the weather data
+            # if self.save_path is not None:
+            #     with open(
+            #         self.json_dump_path
+            #         + "{}_weather_{}.json".format(project_id, weather_layer),
+            #         "w",
+            #     ) as fp:
+            #         json.dump(weather_data_resp["json_response"], fp, indent=2)
+            return weather_data_resp["json_response"]
+
+        self.api_logger.error("\t***ERROR GETTING WEATHER DATA***")
+        return {}
+
+    def get_subbasin_details(
+        self,
+        mapshed_job_uuid: str,
+    ) -> list:
+        """Gets information (geojson, metadata) about the HUC-12 subbasins within the results of a sub-basin preparation (MapShed) request.
+
+        Args:
+            mapshed_job_uuid (str): The UUID for the SUBBASIN mapshed (GWLF-E prepare) job tied to this project, if applicable.
+
+
+        Returns:
+            list: A list of geojsons for the HUC-12's in the subbasins contained in the MapShed job
+        """
+
+        request_endpoint = self.old_modeling_endpoint + "subbasins"
+        self._set_request_headers(request_endpoint)
+
+        params = {"mapshed_job_uuid": mapshed_job_uuid}
+
+        subbasin_detail_req = Request(
+            "POST", "{}/{}".format(self.mmw_host, request_endpoint), params=params
+        )
+        subbasin_detail_resp = self._make_mmw_request(subbasin_detail_req)
+        subbasin_detail_resp_json = subbasin_detail_resp["json_response"]
+
+        if (
+            subbasin_detail_resp_json is not None
+            and type(subbasin_detail_resp_json) is list
+            and len(subbasin_detail_resp_json) > 0
+            and (
+                type(subbasin_detail_resp_json[0]) is dict
+                or type(subbasin_detail_resp_json[0]) is OrderedDict
             )
-            req_dump = json.load(f)
-            f.close()
-
-            if needed_result_key != "":
-                if (
-                    "result_response" in req_dump.keys()
-                    and "result" in req_dump["result_response"].keys()
-                    and needed_result_key
-                    in req_dump["result_response"]["result"].keys()
-                ):
-                    result_raw = req_dump["result_response"]
-                    saved_result = copy.deepcopy(result_raw)["result"]
-
-                elif (
-                    "result" in req_dump.keys()
-                    and needed_result_key in req_dump["result"].keys()
-                ):
-                    result_raw = req_dump
-                    saved_result = copy.deepcopy(result_raw)["result"]
-
-                elif needed_result_key in req_dump.keys():
-                    saved_result = copy.deepcopy(req_dump)
-
-            else:
-                if (
-                    "result_response" in req_dump.keys()
-                    and "result" in req_dump["result_response"].keys()
-                ):
-                    result_raw = req_dump["result_response"]
-                    saved_result = copy.deepcopy(result_raw)["result"]
-
-                elif "result" in req_dump.keys():
-                    result_raw = req_dump
-                    saved_result = copy.deepcopy(result_raw)["result"]
-
+            and "shape" in subbasin_detail_resp_json[0].keys()
+            and subbasin_detail_resp_json[0]["shape"] is not None
+        ):
             self.api_logger.info(
-                "\tRead saved {} results for {} from JSON".format(
-                    self.pprint_endpoint(request_endpoint),
-                    job_label,
+                "\tGot information about {} HUC-12 subbasins".format(
+                    len(subbasin_detail_resp_json)
                 )
             )
-        return (req_dump, saved_result)
+
+            # dump out the subbasins
+            # if self.save_path is not None:
+            #     with open(
+            #         self.json_dump_path + mapshed_job_uuid + "_subbasin_geojsons.json",
+            #         "w",
+            #     ) as fp:
+            #         json.dump(subbasin_detail_resp_json, fp, indent=2)
+            return subbasin_detail_resp_json
+
+        self.api_logger.error("\t***ERROR GETTING SUB-BASIN DETAILS***")
+        return []
 
     def run_batch_analysis(
         self, list_of_aois: List, analysis_endpoint: str
@@ -899,7 +999,7 @@ class ModelMyWatershedAPI:
                 payload=mapshed_payload,
             )
             if "result_response" in mapshed_job_dict.keys():
-                mapshed_job_id = mapshed_job_dict["start_job_response"]["job"]
+                mapshed_job_id = mapshed_job_dict["start_job_response"]["job_uuid"]
                 mapshed_result = mapshed_job_dict["result_response"]["result"]
 
                 mapshed_result["job_label"] = job_label
@@ -1078,3 +1178,185 @@ class ModelMyWatershedAPI:
         mod_dict_dump = "[{}]".format(json.dumps(mod_dict).replace(" ", ""))
 
         return mod_dict_dump
+
+    def analyse_protected_lands(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.protected_lands_endpoint, job_label, payload)
+
+    def analyse_soil(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.soil_endpoint, job_label, payload)
+
+    def analyse_terrain(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.terrain_endpoint, job_label, payload)
+
+    def analyse_climate(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.climate_endpoint, job_label, payload)
+
+    def analyse_point_sources(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.point_source_endpoint, job_label, payload)
+
+    def analyse_animals(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.animal_endpoint, job_label, payload)
+
+    def analyse_catchment_water_quality(
+        self, job_label, payload
+    ) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.catchment_water_quality_endpoint, job_label, payload
+        )
+
+    def analyse_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2019"), job_label, payload
+        )
+
+    def analyse_2019_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2019"), job_label, payload
+        )
+
+    def analyse_2016_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2016"), job_label, payload
+        )
+
+    def analyse_2011_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2011"), job_label, payload
+        )
+
+    def analyse_2006_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2006"), job_label, payload
+        )
+
+    def analyse_2001_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2019_2001"), job_label, payload
+        )
+
+    def analyse_2011_2011_land(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.land_endpoint.format("2011_2011"), job_label, payload
+        )
+
+    def analyse_forcast(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.forcast_endpoint.format("centers"), job_label, payload
+        )
+
+    def analyse_forcast_centers(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.forcast_endpoint.format("centers"), job_label, payload
+        )
+
+    def analyse_forcast_corridors(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.forcast_endpoint.format("corridors"), job_label, payload
+        )
+
+    def analyse_streams(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.streams_endpoint.format("nhdhr"), job_label, payload
+        )
+
+    def analyse_streams_nhdhr(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(
+            self.streams_endpoint.format("nhdhr"), job_label, payload
+        )
+
+    def analyse_streams_nhdmr(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.streams_endpoint.format("nhd"), job_label, payload)
+
+    def analyse_streams_drb(self, job_label, payload) -> ModelMyWatershedJob:
+        return self.run_mmw_job(self.streams_endpoint.format("drb"), job_label, payload)
+
+    def get_dump_filename(self, request_endpoint: str, job_label: str) -> str:
+        """Returns the expected generated file name for a json returned by ModelMyWatershed
+
+        Args:
+            request_endpoint (str): The endpoint of the request
+            job_label (str): custom job label for the request
+
+        Returns:
+            str: a conventioned file name
+        """
+        return (
+            self.json_dump_path
+            + job_label.replace("/", "_").strip(" _")
+            + "_"
+            + self._pprint_endpoint(request_endpoint)
+            + ".json"
+        )
+
+    def read_dumped_result(
+        self,
+        request_endpoint: str,
+        job_label: str,
+        alt_filename: str = "",
+        needed_result_key: str = "",
+    ) -> ModelMyWatershedJob:
+        """Reads a json file saved by this library with its file naming convention back into memory.
+
+        Args:
+            request_endpoint (str): The request endpoint that was used
+            job_label (str): the custom job label
+            alt_filename (str, optional): an alternate file name to look for, if the file was saved with a name other than that generated by `get_dump_filename(...)`. Defaults to "".
+            needed_result_key (str, optional): The key in the json for the results, if the json was saved external to this library.. Defaults to "".
+
+        Returns:
+            ModelMyWatershedJob: A python dictionary made from the saved file.
+        """
+
+        saved_result = None
+        req_dump = None
+        dump_filename = self.get_dump_filename(request_endpoint, job_label)
+        if Path(dump_filename).is_file() or (
+            alt_filename != "" and Path(alt_filename).is_file()
+        ):
+            f = (
+                open(dump_filename)
+                if Path(dump_filename).is_file()
+                else open(alt_filename)
+            )
+            req_dump = json.load(f)
+            f.close()
+
+            if needed_result_key != "":
+                if (
+                    "result_response" in req_dump.keys()
+                    and "result" in req_dump["result_response"].keys()
+                    and needed_result_key
+                    in req_dump["result_response"]["result"].keys()
+                ):
+                    result_raw = req_dump["result_response"]
+                    saved_result = copy.deepcopy(result_raw)["result"]
+
+                elif (
+                    "result" in req_dump.keys()
+                    and needed_result_key in req_dump["result"].keys()
+                ):
+                    result_raw = req_dump
+                    saved_result = copy.deepcopy(result_raw)["result"]
+
+                elif needed_result_key in req_dump.keys():
+                    saved_result = copy.deepcopy(req_dump)
+
+            else:
+                if (
+                    "result_response" in req_dump.keys()
+                    and "result" in req_dump["result_response"].keys()
+                ):
+                    result_raw = req_dump["result_response"]
+                    saved_result = copy.deepcopy(result_raw)["result"]
+
+                elif "result" in req_dump.keys():
+                    result_raw = req_dump
+                    saved_result = copy.deepcopy(result_raw)["result"]
+
+            self.api_logger.info(
+                "\tRead saved {} results for {} from JSON".format(
+                    self._pprint_endpoint(request_endpoint),
+                    job_label,
+                )
+            )
+        return (req_dump, saved_result)
