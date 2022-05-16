@@ -155,7 +155,7 @@ for idx, huc_aoi in enumerate(huc_aois):
                     if lu_mod == "unmodified":
                         land_use_modification_set = "[{}]"
                     else:
-                        land_use_modification_set = mmw_run.dump_land_use_modifications(
+                        land_use_modification_set = mmw_run.convert_predictions_to_modifications(
                             huc_aoi, lu_mod, base_nlcd_for_modifications
                         )
 

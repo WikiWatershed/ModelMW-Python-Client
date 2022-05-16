@@ -9,6 +9,7 @@ from pathlib import Path
 
 from typing import Dict, List, TypedDict, Union, Any
 from typing_extensions import NotRequired
+import collections
 from collections import OrderedDict
 
 import requests
@@ -175,7 +176,7 @@ class ModelMyWatershedAPI:
             self.json_dump_path = self.save_path + "mmw_results\\json_results\\"
 
         # TODO(SRGDamia1): Find out the max response time from Terence
-        DEFAULT_TIMEOUT = 5  # seconds
+        DEFAULT_TIMEOUT = 30  # seconds
 
         # create a TimeoutHTTPAdapter to enforce a default timeout on the session
         # from https://findwork.dev/blog/advanced-usage-python-requests-timeouts-retries-hooks/
@@ -389,18 +390,28 @@ class ModelMyWatershedAPI:
         throttle_time = 30.0
 
         attempts = 0
+        req_resp = None
+        req_resp_json = None
+
         while attempts < 5:
             # use the session to send the request
             # NOTE:  The http method is already part of the prepared request, so here we just "send"
-            req_resp = self.mmw_session.send(prepped)
-            self._print_req_trace(req_resp, logging.DEBUG)
+            try:
+                req_resp = self.mmw_session.send(prepped)
+                self._print_req_trace(req_resp, logging.DEBUG)
+            except requests.exceptions.Timeout:
+                self.api_logger.warn("\t***Request timed out!***")
+                attempts += 1
+                continue
+            except requests.exceptions.RetryError:
+                self.api_logger.warn("\tMaximum retries exceeded")
+                attempts = 5
+                break
 
             # make sure we got valid json - all responses from ModelMW - except for DELETE's - should be json, even errors
-            req_resp_json = None
             try:
                 if prepped.method != "DELETE":
                     req_resp_json = req_resp.json(object_pairs_hook=OrderedDict)
-
             except (requests.exceptions.JSONDecodeError, json.JSONDecodeError):
                 self.api_logger.warn(
                     "\t***Proper JSON not returned for ModelMW request!***"
@@ -444,8 +455,11 @@ class ModelMyWatershedAPI:
             # If we didn't get a positive response code, or we didn't get proper json,
             # or the expected fields aren't in it
             self.api_logger.warn(
-                "\tModelMW {} request to {} FAILED on attempt {}".format(
-                    req_resp.request.method, req_resp.request.url, attempts
+                "\tModelMW {} request to {} FAILED on attempt {} with status code {}".format(
+                    req_resp.request.method,
+                    req_resp.request.url,
+                    attempts,
+                    req_resp.status_code,
                 )
             )
 
@@ -483,14 +497,16 @@ class ModelMyWatershedAPI:
                 attempts = 5
                 break
 
-            elif attempts < 4:
+            if attempts < 4:
                 self.api_logger.debug("\tretrying in {}s...".format(throttle_time))
                 time.sleep(throttle_time)
-                attempts += 1
+
+            attempts += 1
 
         # if we get all the way here, just return whatever we got
         self.api_logger.error("\t***ERROR IN ModelMW REQUEST***")
-        self._print_req_trace(req_resp, logging.ERROR)
+        if req_resp is not None:
+            self._print_req_trace(req_resp, logging.ERROR)
         return {
             "succeeded": True,
             "json_response": None,
@@ -570,12 +586,20 @@ class ModelMyWatershedAPI:
 
         job_id = None
         if (
-            "job_uuid" in start_job_dict["start_job_response"].keys()
+            (
+                type(start_job_dict["start_job_response"]) is dict
+                or type(start_job_dict["start_job_response"]) is collections.OrderedDict
+            )
+            and "job_uuid" in start_job_dict["start_job_response"].keys()
             and start_job_dict["start_job_response"]["job_uuid"] is not None
         ):
             job_id = start_job_dict["start_job_response"]["job_uuid"]
-        if (
-            "job" in start_job_dict["start_job_response"].keys()
+        elif (
+            (
+                type(start_job_dict["start_job_response"]) is dict
+                or type(start_job_dict["start_job_response"]) is collections.OrderedDict
+            )
+            and "job" in start_job_dict["start_job_response"].keys()
             and start_job_dict["start_job_response"]["job"] is not None
         ):
             job_id = start_job_dict["start_job_response"]["job"]
@@ -698,9 +722,12 @@ class ModelMyWatershedAPI:
     def create_project(
         self,
         model_package: str,
-        area_of_interest: Dict,
         name: str = "Untitled Project",
-        mapshed_job_uuid: str = "",
+        area_of_interest: Union[Dict, None] = None,
+        wkaoi: Union[str, None] = None,
+        huc: Union[str, None] = None,
+        mapshed_job_uuid: Union[str, None] = None,
+        subbasin_mapshed_job_uuid: Union[str, None] = None,
         layer_overrides: Union[ModemMyWatershedLayerOverride, None] = None,
     ) -> Dict:
         """Creates a new project on ModelMyWatershed.  At this time, a project
@@ -714,10 +741,24 @@ class ModelMyWatershedAPI:
         YOU MUST BE LOGGED IN TO USE THIS FEATURE!
 
         Args:
-            model_package (str): The model package to use.  Must be either "gwlfe" or "tr-55"
-            area_of_interest (Dict): A geojson dictionary with the shape of the area of interest
+            model_package (str): The model package to use.
+                Must be either "gwlfe" or "tr-55"
             name (str): A name for the project, can be any text
-            mapshed_job_uuid (str): The UUID for the mapshed (GWLF-E prepare) job tied to this project, if applicable.
+            area_of_interest (Union[Dict, None]): A geojson dictionary with the
+                shape of the area of interest for the project.  One of the
+                area_of_interest, wkaoi, or huc must be given.
+            wkaoi (Union[str, None]): A well known area of interest identifier
+                for the project area.  One of the  area_of_interest, wkaoi, or huc
+                must be given.
+            huc (Union[str, None]): A HUC identifier code (HUC8, HUC10, or HUC12) for
+                the project area.  One of the  area_of_interest, wkaoi, or huc must
+                be given.
+            mapshed_job_uuid (str): The UUID for the GWLF-E prepare (MapShed) job tied
+                to this project, if applicable.
+            subbasin_mapshed_job_uuid (str): The UUID for the subbasin GWLF-E prepare
+                (MapShed) job tied to this project, if applicable.
+            layer_overrides (ModemMyWatershedLayerOverride): Any layer overrides to
+                use in the project
 
 
         Returns:
@@ -727,13 +768,29 @@ class ModelMyWatershedAPI:
         request_endpoint = self.project_endpoint
         self._set_request_headers(request_endpoint)
 
+        if huc is None and wkaoi is None and area_of_interest is None:
+            self.api_logger.error(
+                "\t***Either a HUC code, an WKAoI, or a geojson is required to create a project!***"
+            )
+            return {}
+
         payload = {
             "name": name,
-            "area_of_interest": area_of_interest,
             "model_package": model_package,
         }
-        if mapshed_job_uuid != "":
+
+        if area_of_interest is not None:
+            payload["area_of_interest"] = area_of_interest
+        elif huc is not None and huc != "":
+            payload["huc"] = huc
+        elif wkaoi is not None and wkaoi != "":
+            payload["wkaoi"] = wkaoi
+
+        if mapshed_job_uuid is not None and mapshed_job_uuid != "":
             payload["mapshed_job_uuid"] = mapshed_job_uuid
+        if subbasin_mapshed_job_uuid is not None and subbasin_mapshed_job_uuid != "":
+            payload["subbasin_mapshed_job_uuid"] = subbasin_mapshed_job_uuid
+
         if layer_overrides is not None:
             payload["layer_overrides"] = layer_overrides
 
@@ -758,7 +815,6 @@ class ModelMyWatershedAPI:
 
         Args:
                 project_id (Union[str,int]): The project id.
-
 
         Returns:
             None
@@ -824,7 +880,7 @@ class ModelMyWatershedAPI:
         """Gets information (geojson, metadata) about the HUC-12 subbasins within the results of a sub-basin preparation (MapShed) request.
 
         Args:
-            mapshed_job_uuid (str): The UUID for the SUBBASIN mapshed (GWLF-E prepare) job tied to this project, if applicable.
+            mapshed_job_uuid (str): The UUID for the SUBBASIN GWLF-E prepare (MapShed) job tied to this project, if applicable.
 
 
         Returns:
@@ -1061,7 +1117,7 @@ class ModelMyWatershedAPI:
         gwlfe_results["gwlfe_summaries"] = pd.concat(gwlfe_summaries, ignore_index=True)
         return gwlfe_results
 
-    def dump_land_use_modifications(
+    def convert_predictions_to_modifications(
         self,
         modified_analysis_result_file: str,
         unmodified_mapshed_result_file: str,

@@ -201,7 +201,7 @@ for idx, huc_aoi in enumerate(huc_aois):
                             job_label=mapshed_job_label,
                             payload={"huc": huc_aoi},
                         )
-                        land_use_modification_set = mmw_run.dump_land_use_modifications(
+                        land_use_modification_set = mmw_run.convert_predictions_to_modifications(
                             "{}_{}_drb-2100-land_{}".format(
                                 huc_aoi, land_use_layer, lu_mod
                             ),
