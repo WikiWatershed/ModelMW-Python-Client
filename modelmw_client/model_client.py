@@ -464,7 +464,7 @@ class ModelMyWatershedAPI:
             )
 
             # status codes not to retry
-            if req_resp.status_code in [404]:
+            if req_resp.status_code in [400,404]:
                 self.api_logger.warn(
                     "\tGot status code {}; will not retry".format(req_resp.status_code)
                 )
