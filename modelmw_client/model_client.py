@@ -670,14 +670,7 @@ class ModelMyWatershedAPI:
             finished_job_dict["job_result_status"] = "failed"
 
         # dump out the whole job for posterity
-        if self.save_path is not None:
-            with open(
-                self.get_dump_filename(
-                    start_job_dict["request_endpoint"], start_job_dict["job_label"]
-                ),
-                "w",
-            ) as fp:
-                json.dump(finished_job_dict, fp, indent=2)
+        self.dump_job_json(finished_job_dict)
 
         return finished_job_dict
 
@@ -1416,3 +1409,15 @@ class ModelMyWatershedAPI:
                 )
             )
         return (req_dump, saved_result)
+
+    def dump_job_json(self,job_dict:ModelMyWatershedJob)->None:
+
+        # dump out the whole job for posterity
+        if self.save_path is not None:
+            with open(
+                self.get_dump_filename(
+                    job_dict["request_endpoint"], job_dict["job_label"]
+                ),
+                "w",
+            ) as fp:
+                json.dump(job_dict, fp, indent=2)
