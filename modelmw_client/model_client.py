@@ -1,6 +1,8 @@
 """
 Created by Sara Geleskie Damiano
+Contribution by Sarah Jordan
 """
+
 #%%
 import time
 import copy
@@ -54,6 +56,7 @@ class ModelMyWatershedAPI:
     api_endpoint: str = "api/"
     analyze_endpoint: str = api_endpoint + "analyze/"
     modeling_endpoint: str = api_endpoint + "modeling/"
+    watershed_endpoint: str = api_endpoint + "watershed/"
     old_modeling_endpoint: str = "mmw/modeling/"
 
     # simple analysis endpoints
