@@ -411,6 +411,8 @@ class ModelMyWatershedAPI:
                 attempts = 5
                 break
 
+            print("Printing the thing...")
+            print(req_reps_json)
             # make sure we got valid json - all responses from ModelMW - except for DELETE's - should be json, even errors
             try:
                 if prepped.method != "DELETE":
@@ -557,6 +559,8 @@ class ModelMyWatershedAPI:
             data=payload,
             json=json_data,
         )
+
+
         start_job_req: Dict = self._make_mmw_request(
             outgoing_request, ["job", "job_uuid"]
         )
