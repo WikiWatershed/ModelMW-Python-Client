@@ -638,7 +638,8 @@ class ModelMyWatershedAPI:
                 return finished_job_dict
 
             elif (
-                "error" in job_results_resp["json_response"].keys()
+                job_results_json is not None
+                and "error" in job_results_resp["json_response"].keys()
                 and job_results_resp["json_response"]["error"] != ""
             ):
                 self.api_logger.error(
@@ -647,6 +648,14 @@ class ModelMyWatershedAPI:
                     )
                 )
                 finished_job_dict["error_response"] = job_results_json
+                finished_job_dict["job_result_status"] = "failed"
+                return finished_job_dict
+
+            elif job_results_json is None:
+                self.api_logger.error(
+                    "\t***ERROR GETTING JOB RESULTS***\n\t{}".format(job_results_resp)
+                )
+                finished_job_dict["error_response"] = job_results_resp.text
                 finished_job_dict["job_result_status"] = "failed"
                 return finished_job_dict
 
