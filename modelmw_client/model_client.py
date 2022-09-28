@@ -991,8 +991,10 @@ class ModelMyWatershedAPI:
             run_number += 1
 
         # join all of the frames together into one frame with the batch results
-        lu_results = pd.concat(run_frames, ignore_index=True)
-        return lu_results
+        if len(run_frames) > 0:
+            lu_results = pd.concat(run_frames, ignore_index=True)
+            return lu_results
+        return None
 
     def run_batch_gwlfe(
         self, list_of_aois: List, layer_overrides: ModemMyWatershedLayerOverride = None
@@ -1109,15 +1111,30 @@ class ModelMyWatershedAPI:
                 gwlfe_summaries.append(gwlfe_summary)
 
         # join various result
-        gwlfe_results = {}
-        gwlfe_results["gwlfe_monthly"] = pd.concat(gwlfe_monthlies, ignore_index=True)
-        gwlfe_results["gwlfe_load_summaries"] = pd.concat(
-            gwlfe_load_summaries, ignore_index=True
-        )
-        gwlfe_results["gwlfe_lu_loads"] = pd.concat(gwlfe_lu_loads, ignore_index=True)
-        gwlfe_results["gwlfe_metadata"] = pd.concat(gwlfe_metas, ignore_index=True)
-        gwlfe_results["gwlfe_summaries"] = pd.concat(gwlfe_summaries, ignore_index=True)
-        return gwlfe_results
+        if len(gwlfe_metas) < 0:
+            gwlfe_results = {}
+            gwlfe_results["gwlfe_monthly"] = pd.concat(
+                gwlfe_monthlies, ignore_index=True
+            )
+            gwlfe_results["gwlfe_load_summaries"] = pd.concat(
+                gwlfe_load_summaries, ignore_index=True
+            )
+            gwlfe_results["gwlfe_lu_loads"] = pd.concat(
+                gwlfe_lu_loads, ignore_index=True
+            )
+            gwlfe_results["gwlfe_metadata"] = pd.concat(gwlfe_metas, ignore_index=True)
+            gwlfe_results["gwlfe_summaries"] = pd.concat(
+                gwlfe_summaries, ignore_index=True
+            )
+            return gwlfe_results
+
+        return {
+            "gwlfe_monthly": None,
+            "gwlfe_load_summaries": None,
+            "gwlfe_lu_loads": None,
+            "gwlfe_metadata": None,
+            "gwlfe_summaries": None,
+        }
 
     def convert_predictions_to_modifications(
         self,
