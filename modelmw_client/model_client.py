@@ -172,9 +172,6 @@ class ModelMyWatershedAPI:
         self.api_key = api_key
         self.save_path = save_path
 
-        if self.save_path is not None:
-            self.json_dump_path = self.save_path + "mmw_results\\json_results\\"
-
         # TODO(SRGDamia1): Find out the max response time from Terence
         DEFAULT_TIMEOUT = 30  # seconds
 
@@ -856,7 +853,7 @@ class ModelMyWatershedAPI:
             # # dump out the weather data
             # if self.save_path is not None:
             #     with open(
-            #         self.json_dump_path
+            #         self.save_path
             #         + "{}_weather_{}.json".format(project_id, weather_layer),
             #         "w",
             #     ) as fp:
@@ -911,7 +908,7 @@ class ModelMyWatershedAPI:
             # dump out the subbasins
             # if self.save_path is not None:
             #     with open(
-            #         self.json_dump_path + mapshed_job_uuid + "_subbasin_geojsons.json",
+            #         self.save_path + mapshed_job_uuid + "_subbasin_geojsons.json",
             #         "w",
             #     ) as fp:
             #         json.dump(subbasin_detail_resp_json, fp, indent=2)
@@ -1143,13 +1140,13 @@ class ModelMyWatershedAPI:
         _, lu_modifications = self.read_dumped_result(
             "",
             "",
-            self.json_dump_path + modified_analysis_result_file,
+            self.save_path + modified_analysis_result_file,
             "survey",
         )
         _, mapshed_base = self.read_dumped_result(
             "",
             "",
-            self.json_dump_path + unmodified_mapshed_result_file,
+            self.save_path + unmodified_mapshed_result_file,
             "Area",
         )
 
@@ -1330,7 +1327,7 @@ class ModelMyWatershedAPI:
             str: a conventioned file name
         """
         return (
-            self.json_dump_path
+            self.save_path
             + job_label.replace("/", "_").strip(" _")
             + "_"
             + self._pprint_endpoint(request_endpoint)
@@ -1410,7 +1407,7 @@ class ModelMyWatershedAPI:
             )
         return (req_dump, saved_result)
 
-    def dump_job_json(self,job_dict:ModelMyWatershedJob)->None:
+    def dump_job_json(self, job_dict: ModelMyWatershedJob) -> None:
 
         # dump out the whole job for posterity
         if self.save_path is not None:

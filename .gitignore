@@ -134,3 +134,4 @@ mmw_secrets.py
 .vscode/
 examples/mmw_results/*
 environment.yml
+sync.ffs_db
