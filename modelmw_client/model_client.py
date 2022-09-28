@@ -333,13 +333,7 @@ class ModelMyWatershedAPI:
             request_endpoint (str): The endpoint for the request
         """
 
-        if self.api_endpoint in request_endpoint:
-            headers = {
-                "Content-Type": "application/json",
-                "Referer": "https://staging.modelmywatershed.org/analyze",
-                "X-Requested-With": "XMLHttpRequest",
-            }
-        elif self.project_endpoint in request_endpoint:
+        if self.project_endpoint in request_endpoint:
             headers = {
                 "Content-Type": "application/json",
                 "Referer": "https://staging.modelmywatershed.org/project/",
@@ -349,6 +343,12 @@ class ModelMyWatershedAPI:
             headers = {
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "Referer": "https://staging.modelmywatershed.org/project/",
+                "X-Requested-With": "XMLHttpRequest",
+            }
+        else:
+            headers = {
+                "Content-Type": "application/json",
+                "Referer": "https://staging.modelmywatershed.org/analyze",
                 "X-Requested-With": "XMLHttpRequest",
             }
 
@@ -461,7 +461,7 @@ class ModelMyWatershedAPI:
             )
 
             # status codes not to retry
-            if req_resp.status_code in [400,404]:
+            if req_resp.status_code in [400, 404]:
                 self.api_logger.warn(
                     "\tGot status code {}; will not retry".format(req_resp.status_code)
                 )
@@ -543,6 +543,9 @@ class ModelMyWatershedAPI:
             payload = None
         elif self.old_modeling_endpoint in request_endpoint:
             # the older modeling endpoint expected form data, that should be pre-prepared by the user
+            json_data = None
+        else:
+            payload = payload
             json_data = None
 
         outgoing_request: Request = Request(
