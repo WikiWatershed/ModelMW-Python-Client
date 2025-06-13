@@ -175,9 +175,6 @@ class ModelMyWatershedAPI:
         self.api_key = api_key
         self.save_path = save_path
 
-        if self.save_path is not None:
-            self.json_dump_path = self.save_path + "mmw_results\\json_results\\"
-
         # TODO(SRGDamia1): Find out the max response time from Terence
         DEFAULT_TIMEOUT = 30  # seconds
 
@@ -339,13 +336,7 @@ class ModelMyWatershedAPI:
             request_endpoint (str): The endpoint for the request
         """
 
-        if self.api_endpoint in request_endpoint:
-            headers = {
-                "Content-Type": "application/json",
-                "Referer": "https://staging.modelmywatershed.org/analyze",
-                "X-Requested-With": "XMLHttpRequest",
-            }
-        elif self.project_endpoint in request_endpoint:
+        if self.project_endpoint in request_endpoint:
             headers = {
                 "Content-Type": "application/json",
                 "Referer": "https://staging.modelmywatershed.org/project/",
@@ -355,6 +346,12 @@ class ModelMyWatershedAPI:
             headers = {
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "Referer": "https://staging.modelmywatershed.org/project/",
+                "X-Requested-With": "XMLHttpRequest",
+            }
+        else:
+            headers = {
+                "Content-Type": "application/json",
+                "Referer": "https://staging.modelmywatershed.org/analyze",
                 "X-Requested-With": "XMLHttpRequest",
             }
 
@@ -469,7 +466,7 @@ class ModelMyWatershedAPI:
             )
 
             # status codes not to retry
-            if req_resp.status_code in [400,404]:
+            if req_resp.status_code in [400, 404]:
                 self.api_logger.warn(
                     "\tGot status code {}; will not retry".format(req_resp.status_code)
                 )
@@ -551,6 +548,9 @@ class ModelMyWatershedAPI:
             payload = None
         elif self.old_modeling_endpoint in request_endpoint:
             # the older modeling endpoint expected form data, that should be pre-prepared by the user
+            json_data = None
+        else:
+            payload = payload
             json_data = None
 
         outgoing_request: Request = Request(
@@ -645,7 +645,8 @@ class ModelMyWatershedAPI:
                 return finished_job_dict
 
             elif (
-                "error" in job_results_resp["json_response"].keys()
+                job_results_json is not None
+                and "error" in job_results_resp["json_response"].keys()
                 and job_results_resp["json_response"]["error"] != ""
             ):
                 self.api_logger.error(
@@ -654,6 +655,14 @@ class ModelMyWatershedAPI:
                     )
                 )
                 finished_job_dict["error_response"] = job_results_json
+                finished_job_dict["job_result_status"] = "failed"
+                return finished_job_dict
+
+            elif job_results_json is None:
+                self.api_logger.error(
+                    "\t***ERROR GETTING JOB RESULTS***\n\t{}".format(job_results_resp)
+                )
+                finished_job_dict["error_response"] = job_results_resp.text
                 finished_job_dict["job_result_status"] = "failed"
                 return finished_job_dict
 
@@ -863,7 +872,7 @@ class ModelMyWatershedAPI:
             # # dump out the weather data
             # if self.save_path is not None:
             #     with open(
-            #         self.json_dump_path
+            #         self.save_path
             #         + "{}_weather_{}.json".format(project_id, weather_layer),
             #         "w",
             #     ) as fp:
@@ -918,7 +927,7 @@ class ModelMyWatershedAPI:
             # dump out the subbasins
             # if self.save_path is not None:
             #     with open(
-            #         self.json_dump_path + mapshed_job_uuid + "_subbasin_geojsons.json",
+            #         self.save_path + mapshed_job_uuid + "_subbasin_geojsons.json",
             #         "w",
             #     ) as fp:
             #         json.dump(subbasin_detail_resp_json, fp, indent=2)
@@ -989,8 +998,10 @@ class ModelMyWatershedAPI:
             run_number += 1
 
         # join all of the frames together into one frame with the batch results
-        lu_results = pd.concat(run_frames, ignore_index=True)
-        return lu_results
+        if len(run_frames) > 0:
+            lu_results = pd.concat(run_frames, ignore_index=True)
+            return lu_results
+        return None
 
     def run_batch_gwlfe(
         self, list_of_aois: List, layer_overrides: ModemMyWatershedLayerOverride = None
@@ -1107,15 +1118,30 @@ class ModelMyWatershedAPI:
                 gwlfe_summaries.append(gwlfe_summary)
 
         # join various result
-        gwlfe_results = {}
-        gwlfe_results["gwlfe_monthly"] = pd.concat(gwlfe_monthlies, ignore_index=True)
-        gwlfe_results["gwlfe_load_summaries"] = pd.concat(
-            gwlfe_load_summaries, ignore_index=True
-        )
-        gwlfe_results["gwlfe_lu_loads"] = pd.concat(gwlfe_lu_loads, ignore_index=True)
-        gwlfe_results["gwlfe_metadata"] = pd.concat(gwlfe_metas, ignore_index=True)
-        gwlfe_results["gwlfe_summaries"] = pd.concat(gwlfe_summaries, ignore_index=True)
-        return gwlfe_results
+        if len(gwlfe_metas) < 0:
+            gwlfe_results = {}
+            gwlfe_results["gwlfe_monthly"] = pd.concat(
+                gwlfe_monthlies, ignore_index=True
+            )
+            gwlfe_results["gwlfe_load_summaries"] = pd.concat(
+                gwlfe_load_summaries, ignore_index=True
+            )
+            gwlfe_results["gwlfe_lu_loads"] = pd.concat(
+                gwlfe_lu_loads, ignore_index=True
+            )
+            gwlfe_results["gwlfe_metadata"] = pd.concat(gwlfe_metas, ignore_index=True)
+            gwlfe_results["gwlfe_summaries"] = pd.concat(
+                gwlfe_summaries, ignore_index=True
+            )
+            return gwlfe_results
+
+        return {
+            "gwlfe_monthly": None,
+            "gwlfe_load_summaries": None,
+            "gwlfe_lu_loads": None,
+            "gwlfe_metadata": None,
+            "gwlfe_summaries": None,
+        }
 
     def convert_predictions_to_modifications(
         self,
@@ -1150,13 +1176,13 @@ class ModelMyWatershedAPI:
         _, lu_modifications = self.read_dumped_result(
             "",
             "",
-            self.json_dump_path + modified_analysis_result_file,
+            self.save_path + modified_analysis_result_file,
             "survey",
         )
         _, mapshed_base = self.read_dumped_result(
             "",
             "",
-            self.json_dump_path + unmodified_mapshed_result_file,
+            self.save_path + unmodified_mapshed_result_file,
             "Area",
         )
 
@@ -1337,7 +1363,7 @@ class ModelMyWatershedAPI:
             str: a conventioned file name
         """
         return (
-            self.json_dump_path
+            self.save_path
             + job_label.replace("/", "_").strip(" _")
             + "_"
             + self._pprint_endpoint(request_endpoint)
@@ -1417,7 +1443,7 @@ class ModelMyWatershedAPI:
             )
         return (req_dump, saved_result)
 
-    def dump_job_json(self,job_dict:ModelMyWatershedJob)->None:
+    def dump_job_json(self, job_dict: ModelMyWatershedJob) -> None:
 
         # dump out the whole job for posterity
         if self.save_path is not None:
