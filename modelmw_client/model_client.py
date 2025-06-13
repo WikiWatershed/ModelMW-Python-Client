@@ -408,8 +408,6 @@ class ModelMyWatershedAPI:
                 attempts = 5
                 break
 
-            print("Printing the thing...")
-            print(req_reps_json)
             # make sure we got valid json - all responses from ModelMW - except for DELETE's - should be json, even errors
             try:
                 if prepped.method != "DELETE":
