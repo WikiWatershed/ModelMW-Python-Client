@@ -207,17 +207,17 @@ class ModelMyWatershedAPI:
 
         self.mmw_session.headers.update(
             {
-                "Host": "staging.modelmywatershed.org",
+                # "Host": "staging.modelmywatershed.org",
                 "Authorization": "Token " + self.api_key,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:85.0) Gecko/20100101 Firefox/85.0",
-                "Accept": "*/*",
-                "Connection": "keep-alive",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Accept-Language": "en-US,en;q=0.5",
-                "DNT": "1",
-                "Upgrade-Insecure-Requests": "1",
-                "Origin": "https://staging.modelmywatershed.org",
-                "Referer": "{}/".format(self.mmw_host),
+                # "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:85.0) Gecko/20100101 Firefox/85.0",
+                # "Accept": "*/*",
+                # "Connection": "keep-alive",
+                # "Accept-Encoding": "gzip, deflate, br",
+                # "Accept-Language": "en-US,en;q=0.5",
+                # "DNT": "1",
+                # "Upgrade-Insecure-Requests": "1",
+                # "Origin": "https://staging.modelmywatershed.org",
+                # "Referer": "{}/".format(self.mmw_host),
             }
         )
 
@@ -316,9 +316,9 @@ class ModelMyWatershedAPI:
                     "Cache-Control": "no-cache",
                 },
             )
-            self.mmw_session.headers.update(
-                {"X-CSRFToken": self.mmw_session.cookies["csrftoken"]}
-            )
+            # self.mmw_session.headers.update(
+            #     {"X-CSRFToken": self.mmw_session.cookies["csrftoken"]}
+            # )
         except Exception as ex:
             self.api_logger.warn("Failed to log in: {}".format(ex))
             return False
@@ -332,27 +332,27 @@ class ModelMyWatershedAPI:
         Args:
             request_endpoint (str): The endpoint for the request
         """
+        pass
+        # if self.project_endpoint in request_endpoint:
+        #     headers = {
+        #         "Content-Type": "application/json",
+        #         "Referer": "https://staging.modelmywatershed.org/project/",
+        #         "X-Requested-With": "XMLHttpRequest",
+        #     }
+        # elif self.old_modeling_endpoint in request_endpoint:
+        #     headers = {
+        #         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        #         "Referer": "https://staging.modelmywatershed.org/project/",
+        #         "X-Requested-With": "XMLHttpRequest",
+        #     }
+        # else:
+        #     headers = {
+        #         "Content-Type": "application/json",
+        #         "Referer": "https://staging.modelmywatershed.org/analyze",
+        #         "X-Requested-With": "XMLHttpRequest",
+        #     }
 
-        if self.project_endpoint in request_endpoint:
-            headers = {
-                "Content-Type": "application/json",
-                "Referer": "https://staging.modelmywatershed.org/project/",
-                "X-Requested-With": "XMLHttpRequest",
-            }
-        elif self.old_modeling_endpoint in request_endpoint:
-            headers = {
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "Referer": "https://staging.modelmywatershed.org/project/",
-                "X-Requested-With": "XMLHttpRequest",
-            }
-        else:
-            headers = {
-                "Content-Type": "application/json",
-                "Referer": "https://staging.modelmywatershed.org/analyze",
-                "X-Requested-With": "XMLHttpRequest",
-            }
-
-        self.mmw_session.headers.update(headers)
+        # self.mmw_session.headers.update(headers)
 
     def _pprint_endpoint(self, request_endpoint: str) -> None:
         """Prints out the request endpoint in a format usable for a Windows endpoint
@@ -1075,8 +1075,8 @@ class ModelMyWatershedAPI:
                     # Internally, the ModelMW site uses the inputmod_hash in scenerios to
                     # determine whether it can use cached results or if it needs to
                     # re-run the job
-                    "inputmod_hash": self.inputmod_hash,
-                    "modifications": land_use_modification_set,
+                    # "inputmod_hash": self.inputmod_hash,
+                    # "modifications": land_use_modification_set,
                     "job_uuid": mapshed_job_id,
                 }
                 gwlfe_job_dict = self.run_mmw_job(
@@ -1111,7 +1111,7 @@ class ModelMyWatershedAPI:
                 gwlfe_summaries.append(gwlfe_summary)
 
         # join various result
-        if len(gwlfe_metas) < 0:
+        if len(gwlfe_metas) > 0:
             gwlfe_results = {}
             gwlfe_results["gwlfe_monthly"] = pd.concat(
                 gwlfe_monthlies, ignore_index=True
@@ -1447,3 +1447,5 @@ class ModelMyWatershedAPI:
                 "w",
             ) as fp:
                 json.dump(job_dict, fp, indent=2)
+
+# %%
